@@ -1,0 +1,39 @@
+#!/usr/bin/env mkb
+
+option module_path="../marm_libogg"
+option module_path="../marm_libvorbis"
+option module_path="$MARMALADE_ROOT/examples/s3e/"
+
+subprojects
+{
+
+	libogg
+	libvorbis
+	libvorbisfile
+	ExamplesMain
+}
+
+
+# files specifies all files to build
+files
+{
+	(src)
+	[source]
+		main_2.cpp
+		oggHelper.cpp
+		sound_helper.cpp
+	[headers]
+		oggHelper.h
+		sound_helper.h
+		
+# Add new source files here
+}
+
+
+assets
+{
+	(data)
+	test.ogg
+	ogg.raw
+
+}
