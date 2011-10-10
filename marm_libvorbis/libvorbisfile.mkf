@@ -1,0 +1,13 @@
+includepath libvorbis-1.3.2\include
+
+library
+{
+	".,libvorbisfile"
+}
+
+files
+{
+	(libvorbis-1.3.2\include)
+	vorbis\vorbisfile.h
+}
+

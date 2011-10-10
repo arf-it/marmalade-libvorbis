@@ -1,0 +1,16 @@
+option lib
+
+subproject libvorbisfile
+option module_path="../marm_libogg"
+
+subproject libogg
+subproject libvorbis
+
+files
+{
+	[source]
+	(libvorbis-1.3.2\lib)
+	vorbisfile.c
+}
+
+
