@@ -1,0 +1,14 @@
+includepath libogg-1.3.0\include
+
+library
+{
+	".,libogg"
+}
+
+files
+{
+	(libogg-1.3.0\include)
+	ogg\ogg.h
+	ogg\os_types.h
+}
+

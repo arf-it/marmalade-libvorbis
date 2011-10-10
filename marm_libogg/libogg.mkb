@@ -1,0 +1,12 @@
+option lib
+
+subproject libogg
+
+files
+{
+	(libogg-1.3.0\src)
+	bitwise.c
+	framing.c
+}
+
+
