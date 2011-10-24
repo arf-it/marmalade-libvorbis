@@ -2,26 +2,25 @@
 #include "s3eDebug.h"
 #include "s3eMemory.h"
 #include "unistd.h"
+#include "s3eSound.h"
+#include "sound_helper.h"
 
-
+pthread_mutex_t mutex1;
 //THREAD
 CThread::CThread() 
 {
-	ThreadId_ = NULL;
+
 }
 
 int CThread::Start(void * arg)
 {
 	Arg(arg); // store user data
-	//int code = pthread_create(Thread::EntryPoint, this, & ThreadId_);
-	//int code = pthread_create(&ThreadId_,NULL,CThread::EntryPoint,this);
-	ThreadId_ = s3eThreadCreate(EntryPoint,this, NULL);
-	if (!ThreadId_)
+	int ret = pthread_create(&ThreadId_, NULL, EntryPoint, this);
+	if (ret)
 	{
-		s3eDebugErrorPrintf("s3eThreadCreate failed: %s", s3eThreadGetErrorString());
+		s3eDebugErrorPrintf("s3eThreadCreate failed: %d", ret);
 		return 0;
 	}
-	//pino = this;
 	return 1;
 }
 
@@ -33,14 +32,11 @@ int CThread::Run(void * arg)
 }
 
 /*static */
-extern COggHelper* ogg_hlp;
-extern s3eMemoryUsrMgr mgr;
 void* CThread::EntryPoint(void * pthis)
 {
 	if(!pthis) return 0;
 	CThread * pt = (CThread*)pthis;
 	pt->Run( pt->Arg() );
-
 	return 0;
 }
 
@@ -58,8 +54,6 @@ void CThread::Execute(void* arg)
 
 int CThread::Cancel()
 {
-	if(ThreadId_)
-		s3eThreadCancel(ThreadId_);
 
 	return 0;
 }
@@ -72,6 +66,7 @@ aInternalBuffer(size), iBufferSize(size), rIdx(0), wIdx(0),
 
 bool CCircularBuffer::read(ogg_int16_t& result)
 {
+
 	if (bBufferIsEmpty)
 	{
 		bBufferIsFull = false;
@@ -82,6 +77,7 @@ bool CCircularBuffer::read(ogg_int16_t& result)
 	rIdx = (rIdx + 1) % iBufferSize;
 	bBufferIsFull = false; // buffer can't be full after a read
 	bBufferIsEmpty = (rIdx == wIdx); // true if read catches up to write
+
 	return true;
 }
 
@@ -90,16 +86,12 @@ bool CCircularBuffer::write (ogg_int16_t value)
 	if (bBufferIsFull)
 	{
 		bBufferIsEmpty = false;
+
 		return false;
 	}
 
 	aInternalBuffer[wIdx] = value;
 	wIdx = (wIdx + 1) % iBufferSize;
-
-	//if(wIdx == 0)
-	//	fprintf(stderr,"wdix 0\n\n\n\n");
-	//if(rIdx == 0)
-	//	fprintf(stderr,"rdix 0\n\n\n\n");
 
 	bBufferIsEmpty = false; // buffer can't be empty after a write
 	bBufferIsFull = (wIdx == rIdx); // true if write catches up to read
@@ -114,345 +106,17 @@ void CCircularBuffer::clear()
 	bBufferIsEmpty = true;
 }
 
+unsigned int CCircularBuffer::get_freespace()
+{
+	unsigned int remaining = (wIdx >= rIdx)
+		? iBufferSize - wIdx + rIdx
+		: rIdx - wIdx;
+
+	return remaining;
+
+}
+
 //OGG_HELPER
-
-COggHelper::COggHelper()
-{
-	convsize = _CONVSIZE_;
-	ogg_filein	= NULL;
-	mDecBuffer	= NULL;
-	m_bStopDecoding = false;
-
-	memset(&os,0,sizeof(os));
-	memset(&vc,0,sizeof(vc));
-	memset(&vi,0,sizeof(vi));
-	memset(&oy,0,sizeof(oy));
-
-}
-
-
-COggHelper::~COggHelper()
-{
-	if(mDecBuffer != NULL)
-		delete mDecBuffer;
-	cleanup();
-}
-
-bool COggHelper::init_ogg( std::string fin_str )
-{
-	if(mDecBuffer == NULL)
-		mDecBuffer = new CCircularBuffer(_CIRCBUFSIZE_);
-
-
-	cleanup();
-
-	ogg_sync_init(&oy); /* Now we can read pages */
-
-    int i;
-
-    /* grab some data at the head of the stream. We want the first page
-       (which is guaranteed to be small and only contain the Vorbis
-       stream initial header) We need the first page to get the stream
-       serialno. */
-
-	ogg_filein = fopen(fin_str.c_str(),"rb");
-	if(ogg_filein == NULL)
-	{
-		fprintf(stderr,"Cannot open file '%s'.\n",fin_str.c_str());
-		cleanup();
-		return false;
-	}
-    /* submit a 4k block to libvorbis' Ogg layer */
-    buffer=ogg_sync_buffer(&oy,4096);
-    bytes=fread(buffer,1,4096,ogg_filein);
-    ogg_sync_wrote(&oy,bytes);
-    
-    /* Get the first page. */
-    if(ogg_sync_pageout(&oy,&og)!=1)
-	{
-      /* have we simply run out of data?  If so, we're done. */
-      //if(bytes<4096);
-      
-      /* error case.  Must not be Vorbis data */
-      fprintf(stderr,"Input does not appear to be an Ogg bitstream.\n");
-	  cleanup();
-      return false;
-    }
-
-	    /* Get the serial number and set up the rest of decode. */
-    /* serialno first; use it to set up a logical stream */
-    ogg_stream_init(&os,ogg_page_serialno(&og));
-    
-    /* extract the initial header from the first page and verify that the
-       Ogg bitstream is in fact Vorbis data */
-    
-    /* I handle the initial header first instead of just having the code
-       read all three Vorbis headers at once because reading the initial
-       header is an easy way to identify a Vorbis bitstream and it's
-       useful to see that functionality seperated out. */
-    
-    vorbis_info_init(&vi);
-    vorbis_comment_init(&vc);
-    if(ogg_stream_pagein(&os,&og)<0){ 
-      /* error; stream version mismatch perhaps */
-      fprintf(stderr,"Error reading first page of Ogg bitstream data.\n");
-	  cleanup();
-      return false;
-    }
-    
-    if(ogg_stream_packetout(&os,&op)!=1){ 
-      /* no page? must not be vorbis */
-      fprintf(stderr,"Error reading initial header packet.\n");
-	  cleanup();
-     return false;
-    }
-    
-    if(vorbis_synthesis_headerin(&vi,&vc,&op)<0){ 
-      /* error case; not a vorbis header */
-      fprintf(stderr,"This Ogg bitstream does not contain Vorbis "
-              "audio data.\n");
-	  cleanup();
-     return false;
-    }
-    
-    /* At this point, we're sure we're Vorbis. We've set up the logical
-       (Ogg) bitstream decoder. Get the comment and codebook headers and
-       set up the Vorbis decoder */
-    
-    /* The next two packets in order are the comment and codebook headers.
-       They're likely large and may span multiple pages. Thus we read
-       and submit data until we get our two packets, watching that no
-       pages are missing. If a page is missing, error out; losing a
-       header page is the only place where missing data is fatal. */
-    
-    i=0;
-    while(i<2)
-	{
-      while(i<2)
-	  {
-        int result=ogg_sync_pageout(&oy,&og);
-        if(result==0)break; /* Need more data */
-        /* Don't complain about missing or corrupt data yet. We'll
-           catch it at the packet output phase */
-        if(result==1){
-          ogg_stream_pagein(&os,&og); /* we can ignore any errors here
-                                         as they'll also become apparent
-                                         at packetout */
-          while(i<2){
-            result=ogg_stream_packetout(&os,&op);
-            if(result==0)break;
-            if(result<0){
-              /* Uh oh; data at some point was corrupted or missing!
-                 We can't tolerate that in a header.  Die. */
-              fprintf(stderr,"Corrupt secondary header.  Exiting.\n");
-			  cleanup();
-             return false;
-            }
-            result=vorbis_synthesis_headerin(&vi,&vc,&op);
-            if(result<0){
-              fprintf(stderr,"Corrupt secondary header.  Exiting.\n");
-			  cleanup();
-              return false;
-            }
-            i++;
-          }
-        }
-      }
-      /* no harm in not checking before adding more */
-      buffer=ogg_sync_buffer(&oy,4096);
-      bytes=fread(buffer,1,4096,ogg_filein);
-      if(bytes==0 && i<2){
-        fprintf(stderr,"End of file before finding all Vorbis headers!\n");
-		cleanup();
-       return false;
-      }
-      ogg_sync_wrote(&oy,bytes);
-    }
-
-	return true;
-}
-
-bool COggHelper::start_decoding()
-{
-	{
-      char **ptr=vc.user_comments;
-      while(*ptr){
-        fprintf(stderr,"%s\n",*ptr);
-        ++ptr;
-      }
-      fprintf(stderr,"\nBitstream is %d channel, %ldHz\n",vi.channels,vi.rate);
-      fprintf(stderr,"Encoded by: %s\n\n",vc.vendor);
-    }
-    
-    convsize=4096/vi.channels;
-
-    /* OK, got and parsed all three headers. Initialize the Vorbis
-       packet->PCM decoder. */
-    if(vorbis_synthesis_init(&vd,&vi)==0)
-	{ /* central decode state */
-      vorbis_block_init(&vd,&vb);          /* local state for most of the decode
-                                              so multiple block decodes can
-                                              proceed in parallel. We could init
-                                              multiple vorbis_block structures
-                                              for vd here */
-	  m_bStopDecoding = false;
-	  mDecThread.Start(this);
-	  return true;
-	}
-	fprintf(stderr,"Error: Corrupt header during playback initialization.\n");
-
-	cleanup();
-	return false;
-}
-
-int COggHelper::decode( )
-{
-	int i = 0;
-	int eos = 0;
-
-	while(!eos)
-	{
-		int result=ogg_sync_pageout(&oy,&og);
-		if(result==0)break; /* need more data */
-		if(result<0){ /* missing or corrupt data at this page position */
-		fprintf(stderr,"Corrupt or missing data in bitstream; "
-				"continuing...\n");
-		}else{
-		ogg_stream_pagein(&os,&og); /* can safely ignore errors at
-										this point */
-		while(1){
-			result=ogg_stream_packetout(&os,&op);
-              
-			if(result==0)break; /* need more data */
-			if(result<0){ /* missing or corrupt data at this page position */
-			/* no reason to complain; already complained above */
-			}else{
-			/* we have a packet.  Decode it */
-			float **pcm;
-			int samples;
-                
-			if(vorbis_synthesis(&vb,&op)==0) /* test for success! */
-				vorbis_synthesis_blockin(&vd,&vb);
-			/* 
-                   
-			**pcm is a multichannel float vector.  In stereo, for
-			example, pcm[0] is left, and pcm[1] is right.  samples is
-			the size of each channel.  Convert the float values
-			(-1.<=range<=1.) to whatever PCM format and write it out */
-                
-			while((samples=vorbis_synthesis_pcmout(&vd,&pcm))>0)
-			{
-				int j;
-				int clipflag=0;
-				int bout=(samples<convsize?samples:convsize);
-                  
-				/* convert floats to 16 bit signed ints (host order) and
-					interleave */
-				for(i=0;i<vi.channels;i++){
-				ogg_int16_t *ptr=convbuffer+i;
-				float  *mono=pcm[i];
-				for(j=0;j<bout;j++){
-	#if 1
-					int val=(int)floor(mono[j]*32767.f+.5f);
-	#else /* optional dither */
-					int val=mono[j]*32767.f+drand48()-0.5f;
-	#endif
-					/* might as well guard against clipping */
-					if(val>32767){
-					val=32767;
-					clipflag=1;
-					}
-					if(val<-32768){
-					val=-32768;
-					clipflag=1;
-					}
-					*ptr=val;
-					ptr+=vi.channels;
-				}
-				}
-                  
-				if(clipflag)
-				fprintf(stderr,"Clipping in frame %ld\n",(long)(vd.sequence));
-                  
-				if(m_bStopDecoding) return EOS;
-				for(int k=0;k<bout*vi.channels;k++)
-				{
-					if(m_bStopDecoding) return EOS;
-					while(mDecBuffer->BBufferIsFull())
-					{
-						usleep(25);
-						if(m_bStopDecoding) return EOS;/*fprintf(stderr,"Buffer full\n")*/;
-					}
-
-					mDecBuffer->write(convbuffer[k]);
-				}
-
-				vorbis_synthesis_read(&vd,bout); /* tell libvorbis how
-													many samples we
-													actually consumed */
-			}            
-			}
-		}
-		if(ogg_page_eos(&og))eos=1;
-		}
-	}
-
-	if(eos == 1)
-		return EOS;
-
-	buffer=ogg_sync_buffer(&oy,4096);
-	bytes=fread(buffer,1,4096,ogg_filein);
-	ogg_sync_wrote(&oy,bytes);
-	if(bytes==0)eos=1;
-
-	return	COggHelper::EOK;
-}
-
-void COggHelper::decode_loop()
-{
-	int res;
-	res = decode();
-	while(res == COggHelper::EOK)
-	{
-		res = decode();
-	}
-}
-
-void COggHelper::end_decoding()
-{
-	vorbis_block_clear(&vb);
-	vorbis_dsp_clear(&vd);
-	m_bStopDecoding = true;
-}
-
-void COggHelper::cleanup()
-{
-	if(ogg_filein)
-	{
-		fclose(ogg_filein);
-		ogg_filein = NULL;
-	}
-
-	ogg_stream_clear(&os);
-	vorbis_comment_clear(&vc);
-	vorbis_info_clear(&vi); 
-	ogg_sync_clear(&oy);
-}
-
-ogg_int16_t COggHelper::get_sample()
-{
-	ogg_int16_t res = 0;
-	while(!mDecBuffer->read(res))
-	{
-		if(m_bStopDecoding) return 0;
-		fprintf(stderr,"Buffer under run\n"); //wait
-	}
-
-	return res;
-}
-
-
-
 //////////////////////////////////////////////////////////////////////////
 // COggVorbisFileHelper
 //////////////////////////////////////////////////////////////////////////
@@ -463,10 +127,20 @@ COggVorbisFileHelper::COggVorbisFileHelper()
 	nSamples = 0;
 	nChannels = 0;
 	nRate = 0;
+	nSoundChannel	= -1;
+	nOutputRate		= 0;
+	dResampleFactor	= 0;
+	bOutputIsStereo	= -1;
 	time_length = 0;
 	current_time	= 0;
 	current_section = 0;
 	m_bStopDecoding = false;
+	nStatus = OH_NAN;
+	nW	= 0;
+	nL	= 0;
+
+	stereoOutputMode = STEREO_MODE_MONO;
+	conversionType = ZERO_ORDER_HOLD;
 
 	memset(&vf,0,sizeof(vf));
 }
@@ -487,31 +161,28 @@ void COggVorbisFileHelper::cleanup()
 	time_length = 0;
 	current_time	= 0;
 	current_section = 0;
+	nSoundChannel	= -1;
+	nOutputRate		= 0;
+	bOutputIsStereo = -1;
+	dResampleFactor	= 0;
+	nStatus = OH_NAN;
+	nW	= 0;
+	nL	= 0;
 	m_bStopDecoding = false;
 	
+	stereoOutputMode = STEREO_MODE_MONO;
+	conversionType = ZERO_ORDER_HOLD;
+
+	if(nSoundChannel != -1)
+	{
+		s3eSoundChannelUnRegister(nSoundChannel, S3E_CHANNEL_GEN_AUDIO_STEREO);
+		s3eSoundChannelUnRegister(nSoundChannel, S3E_CHANNEL_GEN_AUDIO);
+		s3eSoundChannelUnRegister(nSoundChannel, S3E_CHANNEL_END_SAMPLE);
+	}
 	ov_clear(&vf);
 	if(vi)
 		vorbis_info_clear(vi);
 }
-
-static int _ov_header_fseek_wrap(FILE *f,ogg_int64_t off,int whence){
-	if(f==NULL)return(-1);
-
-#ifdef __MINGW32__
-	return fseeko64(f,off,whence);
-#elif defined (_WIN32)
-	return _fseeki64(f,off,whence);
-#else
-	return fseek(f,(long)off,whence);
-#endif
-}
-
-static ov_callbacks OV_CALLBACKS_NOCLOSE = {
-	(size_t (*)(void *, size_t, size_t, void *))  fread,
-	(int (*)(void *, ogg_int64_t, int))           _ov_header_fseek_wrap,
-	(int (*)(void *))                             NULL,
-	(long (*)(void *))                            ftell
-};
 
 bool COggVorbisFileHelper::init( std::string fin_str )
 {
@@ -520,17 +191,39 @@ bool COggVorbisFileHelper::init( std::string fin_str )
 
 	cleanup();
 
-	oggvorbis_filein = fopen(fin_str.c_str(),"rb");
+	nSoundChannel = s3eSoundGetFreeChannel();
+	if(nSoundChannel == -1)
+	{
+		m_strLastError.clear();
+		m_strLastError = "Cannot open a sound channel.";
+		s3eDebugTracePrintf("Cannot open a sound channel.\n");
+		cleanup();
+		return false;
+	}
+	s3eSoundChannelRegister(nSoundChannel, S3E_CHANNEL_GEN_AUDIO, GenerateAudioCallback, this);
+	s3eSoundChannelRegister(nSoundChannel, S3E_CHANNEL_END_SAMPLE, EndSampleCallback, this);
+
+	ov_callbacks callbacks;
+	callbacks.read_func = read_func;
+	callbacks.seek_func = seek_func;
+	callbacks.close_func = close_func;
+	callbacks.tell_func = tell_func;
+
+	oggvorbis_filein = s3eFileOpen(fin_str.c_str(),"rb");
 	if(oggvorbis_filein == NULL)
 	{
-		fprintf(stderr,"Cannot open file '%s'.\n",fin_str.c_str());
+		m_strLastError.clear();
+		s3eDebugTracePrintf("Cannot open file '%s'.\n",fin_str.c_str());
+		m_strLastError = "Cannot open file " + fin_str; 
 		cleanup();
 		return false;
 	}
 
-	if(ov_open_callbacks(oggvorbis_filein, &vf, NULL, 0, OV_CALLBACKS_NOCLOSE) < 0) 
+	if(ov_open_callbacks(oggvorbis_filein, &vf, NULL, 0, callbacks) < 0) 
 	{
-		fprintf(stderr,"Input does not appear to be an Ogg bitstream.\n");
+		m_strLastError.clear();
+		m_strLastError = "Input does not appear to be an Ogg bitstream.";
+		s3eDebugTracePrintf("Input does not appear to be an Ogg bitstream.\n");
 		cleanup();
 		return false;
 	}
@@ -549,16 +242,25 @@ bool COggVorbisFileHelper::init( std::string fin_str )
 		time_length = ov_time_total(&vf,-1);
 		nChannels = vi->channels;
 		nRate	= vi->rate;
-		fprintf(stderr,"\nBitstream is %d channel, %ldHz\n",vi->channels,vi->rate);
-		fprintf(stderr,"\nDecoded length: %ld samples\n",
-			(long)nSamples);
-		fprintf(stderr,"Encoded by: %s\n\n",ov_comment(&vf,-1)->vendor);
 
+		s3eSoundChannelSetInt(nSoundChannel, S3E_CHANNEL_RATE, nRate);
+		nOutputRate = s3eSoundGetInt(S3E_SOUND_OUTPUT_FREQ);
+		
+		int gcd = GCD(nRate, nOutputRate);
+		nW = nRate  / gcd;
+		nL = nOutputRate / gcd;
 
+		// As a float scale factor. Multiply output pos by this to find input.
+		dResampleFactor = nW / (float) nL;
+
+		s3eDebugTracePrintf("\nBitstream is %d channel, %ldHz\n",vi->channels,vi->rate);
+		s3eDebugTracePrintf("\nDecoded length: %ld samples\n",(long)nSamples);
+		s3eDebugTracePrintf("Encoded by: %s\n\n",ov_comment(&vf,-1)->vendor);
+		s3eDebugTracePrintf("Resampling by rational factor %d / %d", nW, nL);
 	}
 
 	m_bStopDecoding = false;
-	mDecThread.Start(this);
+	nStatus = OH_READY;
 
 	return EOK;
 }
@@ -590,13 +292,21 @@ int COggVorbisFileHelper::decode()
 		//fwrite(pcmout,1,ret,stdout);
 
 		if(m_bStopDecoding) return EOS;
+
+		while(mDecBuffer->get_freespace() <= mDecBuffer->get_bufferSize() / 3)
+		{
+			usleep(25);
+			if(m_bStopDecoding) return EOS;/*fprintf(stderr,"Buffer full\n")*/;
+		}
+
 		for(unsigned int k=0;k<ret/sizeof(ogg_int16_t);k++)
 		{
 			if(m_bStopDecoding) return EOS;
-			while(mDecBuffer->BBufferIsFull())
+			if((nStatus == OH_BUFFERING) &&
+				(mDecBuffer->get_freespace() <= mDecBuffer->get_bufferSize() / 2))
 			{
-				usleep(25);
-				if(m_bStopDecoding) return EOS;/*fprintf(stderr,"Buffer full\n")*/;
+				s3eDebugTracePrintf("buffering complete. Playing now..\n");
+				nStatus = OH_PLAYING;
 			}
 
 			ogg_int16_t* p = (ogg_int16_t*)(convbuffer+k*sizeof(ogg_int16_t));
@@ -623,7 +333,8 @@ ogg_int16_t COggVorbisFileHelper::get_sample()
 	while(!mDecBuffer->read(res))
 	{
 		if(m_bStopDecoding) return 0;
-		fprintf(stderr,"Buffer under run\n"); //wait
+		usleep(10);
+		s3eDebugTracePrintf("Buffer under run\n"); //wait
 	}
 
 	return res;
@@ -635,8 +346,271 @@ bool COggVorbisFileHelper::set_current_timepos( double pos )
 	{
 		ov_time_seek(&vf,pos);
 		mDecBuffer->clear();
+		return true;
 	}
+	return false;
+}
+
+size_t COggVorbisFileHelper::read_func(void *ptr, size_t size, size_t nmemb, void *datasource)
+{
+	return s3eFileRead(ptr, size, nmemb, (s3eFile*)datasource);
+}
+
+int COggVorbisFileHelper::seek_func(void *datasource, ogg_int64_t offset, int whence)
+{
+	return s3eFileSeek((s3eFile*)datasource, (int)offset, (s3eFileSeekOrigin)whence);
+}
+
+int COggVorbisFileHelper::close_func(void *datasource)
+{
+	return s3eFileClose((s3eFile*)datasource);
+}
+
+long COggVorbisFileHelper::tell_func(void *datasource)
+{
+	return s3eFileTell((s3eFile*)datasource);
+}
+
+bool COggVorbisFileHelper::play()
+{
+	int16 dummydata[16];
+	memset(dummydata, 0, 16);
+	if( nStatus == OH_STOPPED)
+	{
+		nStatus = OH_READY;
+		s3eSoundChannelPlay(nSoundChannel, dummydata,8, 1, 0);
+		return true;
+	}
+	if (nStatus == OH_PAUSED) 
+	{
+		resume();
+		return true;
+	}
+	if(nStatus == OH_READY)
+	{
+		//buffering
+		nStatus = OH_BUFFERING;
+		m_bStopDecoding = false;
+		mDecThread.Start(this);
+		while(nStatus == OH_BUFFERING)
+			usleep(500);
+		s3eSoundChannelPlay(nSoundChannel, dummydata,8, 1, 0);
+		return true;
+	}
+	return false;
+}
+
+int COggVorbisFileHelper::GenerateAudioCallback( void* sys, void* user )
+{
+	s3eTimerGetMs();
+	s3eSoundGenAudioInfo* info = (s3eSoundGenAudioInfo*)sys;
+	info->m_EndSample = 0;
+	int16* target = (int16*)info->m_Target;
+
+
+	if(user == NULL)
+		return 0;
+
+	// The user value is the pointer to ogg_hlp object. 
+
+	COggVorbisFileHelper* ogg_hlp = (COggVorbisFileHelper*) user;
+	
+	int inputSampleSize = 1;
+	int outputSampleSize = 1;
+
+	if (info->m_Stereo)
+		outputSampleSize = 2;
+	ogg_hlp->set_outputIsStereo(info->m_Stereo == 2);
+
+	inputSampleSize = ogg_hlp->get_nChannels();
+
+	int samplesPlayed = 0;
+	float dResFactor = ogg_hlp->get_dResampleFactor();
+
+	if(ogg_hlp->get_status() == OH_BUFFERING)
+	{
+		s3eDebugTracePrintf("Buffering. Free space: %d\n",ogg_hlp->mDecBuffer->get_freespace()); //wait
+		return 0;
+	}
+	// For stereo output, info->m_NumSamples is number of l/r pairs (each sample is 32bit)
+	// info->m_OrigNumSamples always measures the total number of 16 bit samples,
+	// regardless of whether input was mono or stereo.
+
+	memset(info->m_Target, 0, info->m_NumSamples * outputSampleSize * sizeof(int16));
+
+	// Loop through samples (mono) or sample-pairs (stereo) required.
+	// If stereo, we copy the 16bit sample for each l/r channel and do per
+	// left/right channel processing on each sample for the pair. i needs
+	// scaling when comparing to input sample count as that is always 16bit.
+
+	for (uint i = 0; i < info->m_NumSamples; i++)
+	{
+		int16 yLeft = 0;  // or single sample if using mono input
+		int16 yRight = 0;
+
+		// Number of samples to play in total needs scaling by resample factor
+		//int inputSamplesUsed = (outputStartPos + i) * inputSampleSize;
+		// Stop when hitting end of data. Must scale to 16bit if stereo
+		// (m_OrigNumSamples is always 16bit) and by resample factor as we're
+		// looping through output position, not input.
+
+		// For each sample (pair) required, we either do:
+		//  * get mono sample if input is mono (output can be either)
+		//  * get left sample if input is stereo (output can be either)
+		//  * get right sample if input and output are both stereo
+
+		int outPosLeft = i * inputSampleSize;
+
+		if (ogg_hlp->conversionType != NO_RESAMPLE)
+		{
+			outPosLeft = (int)(outPosLeft * dResFactor);
+			for(int k=0;k<dResFactor-1;k++)
+			{
+				yLeft = ogg_hlp->get_sample();
+				if (ogg_hlp->get_nChannels() == 2)
+				{
+					yRight = ogg_hlp->get_sample();
+				}
+			}
+		}
+		switch (ogg_hlp->conversionType)
+		{
+		case NO_RESAMPLE:
+			{
+				// copy left (and right) 16bit sample directly from input buffer
+				yLeft = ogg_hlp->get_sample();
+
+				if (ogg_hlp->get_nChannels() == 2)
+				{
+					yRight = ogg_hlp->get_sample();
+					if (ogg_hlp->stereoOutputMode == STEREO_MODE_MONO)
+						yRight = 0;
+				}
+
+
+				break;
+			}
+		case ZERO_ORDER_HOLD:
+			{
+				//yLeft = info->m_OrigStart[outPosLeft];
+				yLeft = ogg_hlp->get_sample();
+				if (ogg_hlp->get_nChannels() == 2)
+				{
+					yRight = ogg_hlp->get_sample();
+					if (ogg_hlp->stereoOutputMode == STEREO_MODE_MONO)
+						yRight = 0;
+				}
+				break;
+			}
+		case FIRST_ORDER_INTERPOLATION:
+			break;
+		case QUADRATIC_INTERPOLATION:
+			break;
+		
+		}
+
+
+		int16 orig = 0;
+		int16 origR = 0;
+		if (info->m_Mix)
+		{
+			orig = *target;
+			origR = *(target+1);
+		}
+
+
+		switch (ogg_hlp->stereoOutputMode)
+		{
+		case STEREO_MODE_BOTH:
+			*target++ = ClipToInt16(yLeft + orig);
+
+			if (info->m_Stereo)
+				*target++ = ClipToInt16(yRight + origR);
+			else
+				*target++ = ClipToInt16(yLeft + orig);
+
+			break;
+
+		case STEREO_MODE_LEFT:
+			*target++ = ClipToInt16(yLeft + orig);
+
+			if (info->m_Stereo)
+				*target++ = ClipToInt16(origR);
+			else
+				*target++ = ClipToInt16(orig);
+
+			break;
+
+		case STEREO_MODE_RIGHT:
+			*target++ = ClipToInt16(orig);
+			if (info->m_Stereo)
+				*target++ = ClipToInt16(yRight +  origR);
+			else
+				*target++ = ClipToInt16(yLeft +  orig);
+
+			break;
+
+		default: //Mono
+			if (ogg_hlp->get_nChannels() == 2)
+				*target++ = ClipToInt16(yLeft + orig+yRight+origR);
+			else
+				*target++ = ClipToInt16(yLeft + orig);
+			break;
+		}
+
+		samplesPlayed++;
+	}
+
+
+	// Inform s3e sound how many samples we played
+	return samplesPlayed;
+}
+
+int32 COggVorbisFileHelper::EndSampleCallback( void* sys, void* user )
+{
+	s3eSoundEndSampleInfo* info = (s3eSoundEndSampleInfo*)sys;
+
+	return info->m_RepsRemaining;
+}
+
+bool COggVorbisFileHelper::stop()
+{
+	s3eSoundChannelStop(nSoundChannel);
+	//s3eSoundChannelUnRegister(nSoundChannel, S3E_CHANNEL_GEN_AUDIO_STEREO);
+	//s3eSoundChannelUnRegister(nSoundChannel, S3E_CHANNEL_GEN_AUDIO);
+	//s3eSoundChannelUnRegister(nSoundChannel, S3E_CHANNEL_END_SAMPLE);
+	//m_bStopDecoding = true;
+	set_current_timepos(0);
+	nStatus = OH_STOPPED;
 	return true;
+}
+
+bool COggVorbisFileHelper::pause()
+{
+	s3eSoundChannelPause(nSoundChannel);
+	nStatus = OH_PAUSED;
+	return true;
+}
+
+bool COggVorbisFileHelper::resume()
+{
+	s3eSoundChannelResume(nSoundChannel);
+	nStatus = OH_PLAYING;
+	return true;
+}
+
+void COggVorbisFileHelper::set_outputStereoMode( STEREO_MODE val )
+{
+	if(nSoundChannel == -1) return;
+	stereoOutputMode = val;
+	if (stereoOutputMode != STEREO_MODE_MONO)
+	{
+	    s3eSoundChannelRegister(nSoundChannel, S3E_CHANNEL_GEN_AUDIO_STEREO, GenerateAudioCallback, this);
+	}
+	else
+	{
+	    s3eSoundChannelUnRegister(nSoundChannel, S3E_CHANNEL_GEN_AUDIO_STEREO);
+	}
 }
 
 

@@ -10,12 +10,14 @@
 #include <fcntl.h>
 #endif
 #include <string>
-#include "s3eThread.h"
+#include <pthread.h>
+#include "s3eFile.h"
 #include <vector>
-#
+
 
 #define _CONVSIZE_ 4096
 #define _CIRCBUFSIZE_	300000
+
 
 class CThread
 {
@@ -33,7 +35,7 @@ protected:
 	void * Arg() const {return Arg_;}
 	void Arg(void* a){Arg_ = a;}
 private:
-	s3eThread* ThreadId_;
+	pthread_t ThreadId_;
 	void * Arg_;
 };
 
@@ -52,6 +54,9 @@ public:
 	bool BufferIsEmpty() const { return bBufferIsEmpty; };
 	bool BBufferIsFull() const { return bBufferIsFull; };
 
+	unsigned int get_freespace();
+	unsigned int get_bufferSize() const { return iBufferSize; }
+
 private:
 	std::vector<ogg_int16_t> aInternalBuffer;
 	unsigned int iBufferSize;
@@ -61,64 +66,6 @@ private:
 	bool bBufferIsFull;
 	int count; // index for test functions
 };
-
-class COggHelper
-{
-protected:
-	ogg_int16_t convbuffer[_CONVSIZE_]; /* take 8k out of the data segment, not the stack */
-	int convsize;
-
-	bool	m_bStopDecoding;
-
-	ogg_sync_state   oy; /* sync and verify incoming physical bitstream */
-	ogg_stream_state os; /* take physical pages, weld into a logical
-							stream of packets */
-	ogg_page         og; /* one Ogg bitstream page. Vorbis packets are inside */
-	ogg_packet       op; /* one raw packet of data for decode */
-
-	vorbis_info      vi; /* struct that stores all the static vorbis bitstream
-							settings */
-	vorbis_comment   vc; /* struct that stores all the bitstream user comments */
-	vorbis_dsp_state vd; /* central working state for the packet->PCM decoder */
-	vorbis_block     vb; /* local working space for packet->PCM decode */
-
-
-	char *buffer;
-	int  bytes;
-
-	FILE* ogg_filein;
-	CCircularBuffer*	mDecBuffer;
-	CThread				mDecThread;
-	std::string			m_strLastError;
-	
-public:
-	COggHelper();
-	~COggHelper();
-
-	enum
-	{
-		ERR = 0,
-		EOK = 1,
-		EOS	= 2,
-		BFF = 3
-	};
-protected:
-	
-public:
-	bool init_ogg(std::string fin_str);
-	bool start_decoding();
-	void end_decoding();
-	void cleanup();
-	int decode();
-	void decode_loop();
-	int get_nChannels(){return vi.channels;};
-	long get_rate(){return vi.rate;};
-
-	ogg_int16_t get_sample();
-
-
-};
-
 
 class COggVorbisFileHelper
 {
@@ -135,12 +82,17 @@ protected:
 	int				nChannels;
 	int				current_section;
 
-	FILE*				oggvorbis_filein;
+	s3eFile*			oggvorbis_filein;
 	CCircularBuffer*	mDecBuffer;
 	CThread				mDecThread;
 	std::string			m_strLastError;
 
 	bool	m_bStopDecoding;
+	int		nSoundChannel;
+	int32	nOutputRate;
+	int		bOutputIsStereo;
+	float	dResampleFactor;
+	int		nW, nL;             // Interpolation and decimation factors
 
 public:
 	COggVorbisFileHelper();
@@ -154,18 +106,82 @@ public:
 		BFF = 3
 	};
 
+	enum OHStatus
+	{
+		OH_NAN			= 0,
+		OH_READY		= 1,
+		OH_PLAYING		= 2,
+		OH_STOPPED		= 3,
+		OH_PAUSED		= 4,
+		OH_ERROR		= 5,
+		OH_BUFFERING	= 6
+	} nStatus;
+
+	enum STEREO_MODE
+	{
+		STEREO_MODE_MONO,
+		STEREO_MODE_BOTH,
+		STEREO_MODE_LEFT,
+		STEREO_MODE_RIGHT,
+		STEREO_MODE_COUNT
+	};
+
+	enum SAMPLE_RATE_CONVERTER
+	{
+		NO_RESAMPLE,
+		ZERO_ORDER_HOLD,
+		FIRST_ORDER_INTERPOLATION,
+		QUADRATIC_INTERPOLATION,
+	};
+
+	int get_status() const { return nStatus; };
 
 	bool init(std::string fin_str);
+	bool play();
+	bool stop();
+	bool pause();
+	bool resume();
+
 	void cleanup();
-	int decode();
-	void decode_loop();
-	void seek(double pos);
+	
 	int get_nChannels(){return nChannels;};
 	long get_rate(){return nRate;};
-	ogg_int64_t get_nsamples() const { return nSamples; };
+	int32 get_outputrate(){return nOutputRate;};
+	float get_dResampleFactor() const { return dResampleFactor; };
+
+	int get_outputIsStereo() const {return bOutputIsStereo;};
+	void set_outputIsStereo(int val){ bOutputIsStereo = val;};
+	
+	STEREO_MODE get_outputStereoMode() const {return stereoOutputMode;};
+	void set_outputStereoMode(STEREO_MODE val);
+
+	SAMPLE_RATE_CONVERTER get_conversionType() const {return conversionType;};
+	void set_conversionType(SAMPLE_RATE_CONVERTER val){ conversionType = val;};
+
 	double get_time_length() {return time_length;};
 	double get_current_time(){return current_time;};
-
 	bool set_current_timepos(double pos);
+	
+	
+	ogg_int64_t get_nsamples() const { return nSamples; };
 	ogg_int16_t get_sample();
+
+	void decode_loop();
+private:
+	STEREO_MODE stereoOutputMode;
+	SAMPLE_RATE_CONVERTER conversionType;
+	// internal functions 
+	int decode();
+	
+
+	// oggVorbis loading callbacks
+	static size_t read_func(void *ptr, size_t size, size_t nmemb, void *datasource);
+	static int seek_func(void *datasource, ogg_int64_t offset, int whence);
+	static int close_func(void *datasource);
+	static long tell_func(void *datasource);
+
+public:
+	// streaming callbacks
+	static int32 EndSampleCallback(void* sys, void* user);
+	static int GenerateAudioCallback(void* sys, void* user);
 };

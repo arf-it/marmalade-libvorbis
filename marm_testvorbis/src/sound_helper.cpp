@@ -1,7 +1,5 @@
 #include "sound_helper.h"
 
-enum STEREO_MODE g_OutputMode = STEREO_MODE_MONO;
-enum SAMPLE_RATE_CONVERTER conversionType = ZERO_ORDER_HOLD;
 
 int16 ClipToInt16(int32 sval)
 {
