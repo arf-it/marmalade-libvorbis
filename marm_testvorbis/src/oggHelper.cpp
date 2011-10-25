@@ -136,6 +136,7 @@ COggVorbisFileHelper::COggVorbisFileHelper()
 	current_section = 0;
 	m_bStopDecoding = false;
 	nStatus = OH_NAN;
+	wait_counter = 0;
 	nW	= 0;
 	nL	= 0;
 
@@ -165,6 +166,7 @@ void COggVorbisFileHelper::cleanup()
 	nOutputRate		= 0;
 	bOutputIsStereo = -1;
 	dResampleFactor	= 0;
+	wait_counter = 0;
 	nStatus = OH_NAN;
 	nW	= 0;
 	nL	= 0;
@@ -267,8 +269,10 @@ bool COggVorbisFileHelper::init( std::string fin_str )
 
 int COggVorbisFileHelper::decode()
 {
-	long ret=ov_read(&vf,convbuffer,sizeof(convbuffer),0,2,1,&current_section);
-	current_time = ov_time_tell(&vf);
+	pthread_mutex_lock(&mutex1);
+	long ret=ov_read_func(&vf,convbuffer,sizeof(convbuffer),0,2,1,&current_section);
+	current_time = ov_time_tell_func(&vf);
+	pthread_mutex_unlock(&mutex1);
     if (ret == 0)
 	{
       /* EOF */
@@ -293,22 +297,27 @@ int COggVorbisFileHelper::decode()
 
 		if(m_bStopDecoding) return EOS;
 
-		while(mDecBuffer->get_freespace() <= mDecBuffer->get_bufferSize() / 3)
-		{
-			usleep(25);
-			if(m_bStopDecoding) return EOS;/*fprintf(stderr,"Buffer full\n")*/;
-		}
-
 		for(unsigned int k=0;k<ret/sizeof(ogg_int16_t);k++)
 		{
 			if(m_bStopDecoding) return EOS;
-			if((nStatus == OH_BUFFERING) &&
-				(mDecBuffer->get_freespace() <= mDecBuffer->get_bufferSize() / 2))
+			//if((nStatus == OH_BUFFERING) &&
+			//	(mDecBuffer->get_freespace() <= mDecBuffer->get_bufferSize() / 2))
+			//{
+			//	s3eDebugTracePrintf("buffering complete. Playing now..\n");
+			//	Wait_counter(0);
+			//	nStatus = OH_PLAYING;
+			//}
+			while(mDecBuffer->get_freespace() <= mDecBuffer->get_bufferSize() / 4)
 			{
-				s3eDebugTracePrintf("buffering complete. Playing now..\n");
-				nStatus = OH_PLAYING;
+				usleep(50);
+				if(nStatus == OH_BUFFERING) 
+				{
+					s3eDebugTracePrintf("buffering complete. Playing now..\n");
+					nStatus = OH_PLAYING;
+					Wait_counter(0);
+				}
+				if(m_bStopDecoding) return EOS;/*fprintf(stderr,"Buffer full\n")*/;
 			}
-
 			ogg_int16_t* p = (ogg_int16_t*)(convbuffer+k*sizeof(ogg_int16_t));
 			mDecBuffer->write(*p);
 		}
@@ -333,7 +342,6 @@ ogg_int16_t COggVorbisFileHelper::get_sample()
 	while(!mDecBuffer->read(res))
 	{
 		if(m_bStopDecoding) return 0;
-		usleep(10);
 		s3eDebugTracePrintf("Buffer under run\n"); //wait
 	}
 
@@ -344,8 +352,13 @@ bool COggVorbisFileHelper::set_current_timepos( double pos )
 {
 	if(vf.datasource && vf.seekable)
 	{
-		ov_time_seek(&vf,pos);
+		s3eSoundChannelPause(nSoundChannel);
 		mDecBuffer->clear();
+		pthread_mutex_lock(&mutex1);
+		ov_time_seek_func(&vf,pos);
+		pthread_mutex_unlock(&mutex1);
+		nStatus = OH_BUFFERING;
+		s3eSoundChannelResume(nSoundChannel);
 		return true;
 	}
 	return false;
@@ -369,35 +382,6 @@ int COggVorbisFileHelper::close_func(void *datasource)
 long COggVorbisFileHelper::tell_func(void *datasource)
 {
 	return s3eFileTell((s3eFile*)datasource);
-}
-
-bool COggVorbisFileHelper::play()
-{
-	int16 dummydata[16];
-	memset(dummydata, 0, 16);
-	if( nStatus == OH_STOPPED)
-	{
-		nStatus = OH_READY;
-		s3eSoundChannelPlay(nSoundChannel, dummydata,8, 1, 0);
-		return true;
-	}
-	if (nStatus == OH_PAUSED) 
-	{
-		resume();
-		return true;
-	}
-	if(nStatus == OH_READY)
-	{
-		//buffering
-		nStatus = OH_BUFFERING;
-		m_bStopDecoding = false;
-		mDecThread.Start(this);
-		while(nStatus == OH_BUFFERING)
-			usleep(500);
-		s3eSoundChannelPlay(nSoundChannel, dummydata,8, 1, 0);
-		return true;
-	}
-	return false;
 }
 
 int COggVorbisFileHelper::GenerateAudioCallback( void* sys, void* user )
@@ -427,17 +411,23 @@ int COggVorbisFileHelper::GenerateAudioCallback( void* sys, void* user )
 	int samplesPlayed = 0;
 	float dResFactor = ogg_hlp->get_dResampleFactor();
 
-	if(ogg_hlp->get_status() == OH_BUFFERING)
-	{
-		s3eDebugTracePrintf("Buffering. Free space: %d\n",ogg_hlp->mDecBuffer->get_freespace()); //wait
-		return 0;
-	}
 	// For stereo output, info->m_NumSamples is number of l/r pairs (each sample is 32bit)
 	// info->m_OrigNumSamples always measures the total number of 16 bit samples,
 	// regardless of whether input was mono or stereo.
 
-	memset(info->m_Target, 0, info->m_NumSamples * outputSampleSize * sizeof(int16));
+	
+	int nWC = ogg_hlp->Wait_counter();
+	if((ogg_hlp->get_status() == OH_BUFFERING) || (nWC < 5))
+	{
+		s3eDebugTracePrintf("Buffering. Free space: %d\nSamples: %d",
+			ogg_hlp->mDecBuffer->get_freespace(),
+			info->m_NumSamples); //wait
 
+		memset(info->m_Target, 0, info->m_NumSamples * outputSampleSize * sizeof(int16));
+		nWC++;
+		ogg_hlp->Wait_counter(nWC);
+		return info->m_NumSamples;
+	}
 	// Loop through samples (mono) or sample-pairs (stereo) required.
 	// If stereo, we copy the 16bit sample for each l/r channel and do per
 	// left/right channel processing on each sample for the pair. i needs
@@ -573,14 +563,44 @@ int32 COggVorbisFileHelper::EndSampleCallback( void* sys, void* user )
 	return info->m_RepsRemaining;
 }
 
+bool COggVorbisFileHelper::play()
+{
+	int16 dummydata[16];
+	memset(dummydata, 0, 16);
+	if( nStatus == OH_STOPPED)
+	{
+		m_bStopDecoding = false;
+		s3eSoundChannelPlay(nSoundChannel, dummydata,8, 1, 0);
+		return true;
+	}
+	if (nStatus == OH_PAUSED) 
+	{
+		resume();
+		return true;
+	}
+	if(nStatus == OH_READY)
+	{
+		//buffering
+		nStatus = OH_BUFFERING;
+		m_bStopDecoding = false;
+		mDecThread.Start(this);
+		s3eSoundChannelPlay(nSoundChannel, dummydata,8, 1, 0);
+		return true;
+	}
+	return false;
+}
+
 bool COggVorbisFileHelper::stop()
 {
 	s3eSoundChannelStop(nSoundChannel);
-	//s3eSoundChannelUnRegister(nSoundChannel, S3E_CHANNEL_GEN_AUDIO_STEREO);
-	//s3eSoundChannelUnRegister(nSoundChannel, S3E_CHANNEL_GEN_AUDIO);
-	//s3eSoundChannelUnRegister(nSoundChannel, S3E_CHANNEL_END_SAMPLE);
-	//m_bStopDecoding = true;
-	set_current_timepos(0);
+	if(vf.datasource && vf.seekable)
+	{
+		pthread_mutex_lock(&mutex1);
+		ov_time_seek(&vf,0);
+		pthread_mutex_unlock(&mutex1);
+		Wait_counter(0);
+		mDecBuffer->clear();
+	}
 	nStatus = OH_STOPPED;
 	return true;
 }
@@ -611,6 +631,56 @@ void COggVorbisFileHelper::set_outputStereoMode( STEREO_MODE val )
 	{
 	    s3eSoundChannelUnRegister(nSoundChannel, S3E_CHANNEL_GEN_AUDIO_STEREO);
 	}
+}
+
+
+
+long COggVorbisFileHelper::ov_read_func( OggVorbis_File *vf,char *buffer,int length, int bigendianp,int word,int sgned,int *bitstream )
+{
+	long ret;
+#ifdef _USELIBTREMOR
+	ret=ov_read(vf,convbuffer,sizeof(convbuffer),&current_section);
+#else
+	ret=ov_read(vf,convbuffer,sizeof(convbuffer),0,2,1,&current_section);
+#endif
+	return ret;
+}
+
+double COggVorbisFileHelper::ov_time_tell_func( OggVorbis_File *vf )
+{
+#ifdef _USELIBTREMOR
+	ogg_int64_t tt = 0;
+	tt = ov_time_tell(vf);
+	return (double)tt / 1000;
+#else
+	double tt = 0;
+	tt = ov_time_tell(vf);
+	return tt;
+#endif
+}
+
+double COggVorbisFileHelper::ov_time_total_func( OggVorbis_File *vf,int i )
+{
+#ifdef _USELIBTREMOR
+	ogg_int64_t tt = 0;
+	tt = ov_time_total(vf,-1);
+	return (double)tt / 1000;
+#else
+	double tt = 0;
+	tt = ov_time_total(vf,-1);
+	return tt;
+#endif
+}
+
+int COggVorbisFileHelper::ov_time_seek_func( OggVorbis_File *vf,double pos )
+{
+#ifdef _USELIBTREMOR
+	ogg_int64_t ipos = 0;
+	ipos = pos * 1000; 
+	return ov_time_seek(vf,ipos);
+#else
+	return ov_time_seek(vf,pos);
+#endif
 }
 
 

@@ -1,14 +1,21 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+
+#ifdef _USELIBTREMOR
+#include <ivorbiscodec.h>
+#define OV_EXCLUDE_STATIC_CALLBACKS
+#include <ivorbisfile.h>
+#else
 #include <vorbis/codec.h>
 #define OV_EXCLUDE_STATIC_CALLBACKS
 #include <vorbis/vorbisfile.h>
-
-#ifdef _WIN32 /* We need the following two to set stdin/stdout to binary */
-#include <io.h>
-#include <fcntl.h>
 #endif
+
+//#ifdef _WIN32 /* We need the following two to set stdin/stdout to binary */
+//#include <io.h>
+//#include <fcntl.h>
+//#endif
 #include <string>
 #include <pthread.h>
 #include "s3eFile.h"
@@ -77,8 +84,6 @@ protected:
 
 	ogg_int64_t		nSamples;
 	long			nRate;
-	double			time_length;
-	double			current_time;
 	int				nChannels;
 	int				current_section;
 
@@ -93,6 +98,9 @@ protected:
 	int		bOutputIsStereo;
 	float	dResampleFactor;
 	int		nW, nL;             // Interpolation and decimation factors
+
+	double	time_length;
+	double	current_time;
 
 public:
 	COggVorbisFileHelper();
@@ -161,15 +169,19 @@ public:
 	double get_time_length() {return time_length;};
 	double get_current_time(){return current_time;};
 	bool set_current_timepos(double pos);
-	
+
 	
 	ogg_int64_t get_nsamples() const { return nSamples; };
 	ogg_int16_t get_sample();
 
 	void decode_loop();
+
+	int Wait_counter() const { return wait_counter; }
+	void Wait_counter(int val) { wait_counter = val; }
 private:
 	STEREO_MODE stereoOutputMode;
 	SAMPLE_RATE_CONVERTER conversionType;
+	int wait_counter;
 	// internal functions 
 	int decode();
 	
@@ -179,6 +191,13 @@ private:
 	static int seek_func(void *datasource, ogg_int64_t offset, int whence);
 	static int close_func(void *datasource);
 	static long tell_func(void *datasource);
+
+
+	long ov_read_func(OggVorbis_File *vf,char *buffer,int length,int bigendianp,int word,int sgned,int *bitstream);
+	double ov_time_total_func(OggVorbis_File *vf,int i);
+	double ov_time_tell_func(OggVorbis_File *vf);
+	int ov_time_seek_func(OggVorbis_File *vf,double pos);
+
 
 public:
 	// streaming callbacks
