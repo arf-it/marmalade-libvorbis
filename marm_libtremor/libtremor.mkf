@@ -1,0 +1,14 @@
+includepath libtremor
+
+library
+{
+	".,libtremor"
+}
+
+files
+{
+	(libtremor)
+	ivorbiscodec.h
+	ivorbisfile.h
+}
+
