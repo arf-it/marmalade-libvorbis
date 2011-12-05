@@ -1,23 +1,28 @@
 #include "s3e.h"
 
-extern enum STEREO_MODE
+S3E_INLINE int16 ClipToInt16(int32 sval)
 {
-	STEREO_MODE_MONO,
-	STEREO_MODE_BOTH,
-	STEREO_MODE_LEFT,
-	STEREO_MODE_RIGHT,
-	STEREO_MODE_COUNT
-} g_OutputMode;
+	enum
+	{
+		minval =  INT16_MIN,
+		maxval =  INT16_MAX,
+		allbits = UINT16_MAX
+	};
 
-extern enum SAMPLE_RATE_CONVERTER
-{
-	NO_RESAMPLE,
-	ZERO_ORDER_HOLD,
-	FIRST_ORDER_INTERPOLATION,
-	QUADRATIC_INTERPOLATION,
-} conversionType;
+	// quick overflow test, the addition moves valid range to 0-allbits
+	if ((sval-minval) & ~allbits)
+	{
+		// we overflowed.
+		if (sval > maxval)
+			sval = maxval;
+		else
+			if (sval < minval)
+				sval = minval;
+	}
 
-int16 ClipToInt16(int32 sval);
+	return (int16)sval;
+}
+
 int GCD(int a, int b);
 
 

@@ -21,17 +21,30 @@ int		g_curSoundPos = 0;
 int     g_SoundSamples;     // Length of sound data in 16-bit samples
 int		g_PlayingChannel;
 int		g_SamplesPlayed;
+int		g_ResampleQuality = -1;
+bool	g_EnableResample = true;
 
-
+#define	_BUILD	117
 COggVorbisFileHelper* ogg_hlp;
 
 
 bool LoadSound()
 {
+	g_ResampleQuality++;
+	if(g_ResampleQuality >= 11)
+	{
+		g_ResampleQuality = 0;
+		g_EnableResample = 0;
+	}
+	else
+	{
+		g_EnableResample = 1;
+	}
 
-	if(!ogg_hlp->init("test.ogg"))
-		return 0;
+	if(!ogg_hlp->init("test.ogg",g_EnableResample,g_ResampleQuality))
+		return false;
 
+	
 	return true;
 }
 
@@ -49,27 +62,22 @@ void cleanup()
 }
 
 Button* g_PlayNoResampleButton;
-Button* g_PlayZeroOrderButton;
-//Button* g_PlayLinearButton;
-//Button* g_PlayQuadraticButton;
 Button* g_StopButton;
 Button* g_PauseButton;
 Button* g_StereoButton;
-Button* g_OutputFilterButton;
 Button* g_InputButton;
 Button* g_MoveButton;
 
 bool    g_Playing = false;  // True if we're playing a sample
 
 
+
 void ExampleInit()
 {
 	ogg_hlp = new COggVorbisFileHelper;
 	
-    g_PlayNoResampleButton = NewButton("Play (no resampling)");
-    g_PlayZeroOrderButton = NewButton("Play (zero order hold)");
-    //g_PlayLinearButton = NewButton("Play (linear interpolation)");
-    //g_PlayQuadraticButton = NewButton("Play (quadratic interpolation)");
+    g_PlayNoResampleButton = NewButton("Play");
+
     g_StopButton = NewButton("Stop");
 	g_PauseButton = NewButton("Pause");
 
@@ -77,12 +85,15 @@ void ExampleInit()
 	g_MoveButton = NewButton("Move to 50%");
     g_StereoButton = NewButton("Change Output (mono/stereo/L/R)");
 
+
+
 }
 /*
  * Do cleanup work
  */
 void ExampleTerm()
 {
+	ogg_hlp->stop();
 	ogg_hlp->cleanup();
 }
 
@@ -102,28 +113,12 @@ bool ExampleUpdate()
 
         if (pressed == g_PlayNoResampleButton)
         {
-			ogg_hlp->set_conversionType(COggVorbisFileHelper::NO_RESAMPLE);
             play = true;
         }
-        else if (pressed == g_PlayZeroOrderButton)
-        {
-            ogg_hlp->set_conversionType(COggVorbisFileHelper::ZERO_ORDER_HOLD);
-            play = true;
-        }
-        //else if (pressed == g_PlayLinearButton)
-        //{
-        //    conversionType = FIRST_ORDER_INTERPOLATION;
-        //    play = true;
-        //}
-        //else if (pressed == g_PlayQuadraticButton)
-        //{
-        //    conversionType = QUADRATIC_INTERPOLATION;
-        //    play = true;
-        //}
+
         if (play)
         {
-			ogg_hlp->play();
-            g_Playing = true;
+			if(ogg_hlp->play())	g_Playing = true;
         }
     }
     else if (pressed == g_StopButton)
@@ -144,7 +139,7 @@ bool ExampleUpdate()
     if (pressed == g_StereoButton)
     {		
 		COggVorbisFileHelper::STEREO_MODE g_OutputMode;
-        g_OutputMode = (COggVorbisFileHelper::STEREO_MODE)((ogg_hlp->get_outputStereoMode() + 1) % STEREO_MODE_COUNT);
+        g_OutputMode = (COggVorbisFileHelper::STEREO_MODE)((ogg_hlp->get_outputStereoMode() + 1) % COggVorbisFileHelper::STEREO_MODE_COUNT);
 		ogg_hlp->set_outputStereoMode(g_OutputMode);
 
     }
@@ -178,6 +173,7 @@ bool ExampleUpdate()
 		}
 
 	}
+
     return true;
 }
 
@@ -188,20 +184,15 @@ void ExampleRender()
 	if (g_Playing)
 	{
 		g_PlayNoResampleButton->m_Enabled = false;
-		g_PlayZeroOrderButton->m_Enabled = false;
-		//g_PlayLinearButton->m_Enabled = false;
-		//g_PlayQuadraticButton->m_Enabled = false;
 		g_StopButton->m_Enabled = true;
 		g_PauseButton->m_Enabled = true;
 		g_InputButton->m_Enabled = false;
+		
 
 	}
 	else
 	{
 		g_PlayNoResampleButton->m_Enabled = true;
-		g_PlayZeroOrderButton->m_Enabled = true;
-		//g_PlayLinearButton->m_Enabled = true;
-		//g_PlayQuadraticButton->m_Enabled = true;
 		g_StopButton->m_Enabled = false;
 		g_PauseButton->m_Enabled = false;
 		g_InputButton->m_Enabled = true;
@@ -262,7 +253,7 @@ void ExampleRender()
 	s3eDebugPrintf(x, y, 0, "`x666666g_OutputIsStereo: %d", ogg_hlp->get_outputIsStereo());
 	y += textHeight;
 
-	s3eDebugPrintf(x, y, 0, "`x666666Plays Remaining: %d", -1);
+	s3eDebugPrintf(x, y, 0, "`x666666Buffer: %.2f",ogg_hlp->get_decbuf()*100);
 	y += textHeight;
 
 	s3eDebugPrintf(x, y, 0, "`x666666Total Samples: %ld", (long)ogg_hlp->get_nsamples());
@@ -273,7 +264,15 @@ void ExampleRender()
 
 	s3eDebugPrintf(x, y, 0, "`x666666Current time: %.0f (%0.f%%)", ogg_hlp->get_current_time(),ogg_hlp->get_current_time()/ogg_hlp->get_time_length()*100);
 	y += textHeight;
-	//if(g_Playing)
-	//	s3eDebugPrintf(x, y, 0, "`x666666Buffer: %.2f", ((double)(ogg_hlp.mDecBuffer->get_freespace())) / 8000);
+	s3eDebugPrintf(x, y, 0, "`x666666Resample: %d - Quality: %d)", g_EnableResample,g_ResampleQuality);
+	y += textHeight;
+
+	s3eDebugPrintf(x, y, 0, "`x666666Status: %s", ogg_hlp->GetStatus().c_str());
+	y += textHeight;
+	y += textHeight;
+	y += textHeight;
+
+	s3eDebugPrintf(x, y, 0, "`x666666Build: %0d", int(_BUILD));
+
 
 }

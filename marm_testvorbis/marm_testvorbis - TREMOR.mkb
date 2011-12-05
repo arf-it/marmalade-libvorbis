@@ -4,6 +4,7 @@ option module_path="../marm_libogg"
 option module_path="../marm_libtremor"
 option module_path="$MARMALADE_ROOT/examples/s3e/"
 
+define _USELIBTREMOR
 subprojects
 {
 
@@ -24,6 +25,15 @@ files
 	[headers]
 		oggHelper.h
 		sound_helper.h
+		wsfir.h
+	(libs)
+	[libresample]
+		arch.h
+		fixed_generic.h
+		resample.cpp
+		resample.h
+		speex_resampler.h
+		stack_alloc.h
 		
 # Add new source files here
 }
