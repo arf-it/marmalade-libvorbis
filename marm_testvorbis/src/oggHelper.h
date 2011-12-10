@@ -188,6 +188,12 @@ protected:
 	short m_tmpbufR[_CONVSIZE_];
 	short m_tmpbufL[_CONVSIZE_];
 
+	unsigned int m_outbufsizeL;
+	unsigned int m_outbufsizeR;
+
+	short* m_outL;
+	short* m_outR;
+
 	unsigned int cb_pos;
 	unsigned int cb_size;
 
@@ -230,9 +236,7 @@ protected:
 	int16* iFilterBufferR;
 	double* dFilterCoefficients;
 
-public:
-	s3eMemoryUsrMgr memoryCallbacks;
-	
+
 
 public:
 	
@@ -268,7 +272,10 @@ public:
 		STEREO_MODE_COUNT
 	};
 
-	int get_status() const { return nStatus; };
+	void set_status(OHStatus status);
+	OHStatus get_status() { return nStatus; };
+	std::string get_statusstr();
+
 	int get_decbufspace() { if(mDecBuffer)return mDecBuffer->GetBusy();return 0;};
 	double get_decbuf(){return (double)get_decbufspace()/_CIRCBUFSIZE_;};
 	bool init(std::string fin_str,bool bResample = true,int nResQuality = 0);
@@ -303,8 +310,7 @@ public:
 	int Wait_counter() const { return wait_counter; }
 	void Wait_counter(int val) { wait_counter = val; }
 
-	std::string GetStatus() const { return m_strStatus; }
-	void SetStatus(std::string val) { m_strStatus = val; }
+	
 
 private:
 	STEREO_MODE stereoOutputMode;
@@ -326,9 +332,11 @@ private:
 	double ov_time_tell_func(OggVorbis_File *vf);
 	int ov_time_seek_func(OggVorbis_File *vf,double pos);
 
+	bool IsLastSample();
 
 public:
 	// streaming callbacks
 	static int32 EndSampleCallback(void* sys, void* user);
 	static int GenerateAudioCallback(void* sys, void* user);
+	
 };

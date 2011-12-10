@@ -24,7 +24,7 @@ int		g_SamplesPlayed;
 int		g_ResampleQuality = -1;
 bool	g_EnableResample = true;
 
-#define	_BUILD	117
+#define	_BUILD	121
 COggVorbisFileHelper* ogg_hlp;
 
 
@@ -107,6 +107,7 @@ bool ExampleUpdate()
 {
     Button* pressed = GetSelectedButton();
 
+	g_Playing = (ogg_hlp->get_status() == COggVorbisFileHelper::OH_PLAYING);
     if (!g_Playing)
     {
         bool play = false;
@@ -134,7 +135,7 @@ bool ExampleUpdate()
 	else if (pressed == g_MoveButton)
 	{
 		ogg_hlp->set_current_timepos(180);
-		g_Playing = false;
+		g_Playing = true;
 	}
     if (pressed == g_StereoButton)
     {		
@@ -267,7 +268,7 @@ void ExampleRender()
 	s3eDebugPrintf(x, y, 0, "`x666666Resample: %d - Quality: %d)", g_EnableResample,g_ResampleQuality);
 	y += textHeight;
 
-	s3eDebugPrintf(x, y, 0, "`x666666Status: %s", ogg_hlp->GetStatus().c_str());
+	s3eDebugPrintf(x, y, 0, "`x666666Status: %s", ogg_hlp->get_statusstr().c_str());
 	y += textHeight;
 	y += textHeight;
 	y += textHeight;
