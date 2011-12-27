@@ -24,7 +24,7 @@ int		g_SamplesPlayed;
 int		g_ResampleQuality = -1;
 bool	g_EnableResample = true;
 
-#define	_BUILD	121
+#define	_BUILD	128
 COggVorbisFileHelper* ogg_hlp;
 
 

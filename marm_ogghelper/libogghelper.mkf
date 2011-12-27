@@ -1,0 +1,59 @@
+includepath src
+
+#define _USELIBTREMOR
+
+if {{ defined _USELIBTREMOR }} 
+{ 
+	option module_path="../marm_libtremor"
+}
+else
+{
+	option module_path="../marm_libvorbis"
+}
+option module_path="../marm_libogg"
+# files specifies all files to build
+
+files
+{
+	defines.txt
+	(src)
+	[source]
+		oggHelper.cpp
+		sound_helper.cpp
+	[headers]
+		oggHelper.h
+		sound_helper.h
+		wsfir.h
+	(libs)
+	[libresample]
+		arch.h
+		fixed_generic.h
+		resample.cpp
+		resample.h
+		speex_resampler.h
+		stack_alloc.h
+
+		
+# Add new source files here
+}
+
+subprojects
+{
+	libogg
+}
+
+if {{ defined _USELIBTREMOR }} 
+{ 
+	subprojects
+	{
+		libtremor
+	}
+}
+else
+{
+	subprojects
+	{
+		libvorbis
+		libvorbisfile
+	}
+}

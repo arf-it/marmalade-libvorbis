@@ -15,12 +15,3 @@
 #
 # Some conditional operations are also permitted, see the
 # S3E documentation for details.
-
-[S3E]
-MemSize=16777216			# 16 Mb
-MemSizeDebugDevice=5242880	# 5  Mb
-MemSizeDebug=20971520		# 20 Mb
-MemMgrMaxAllocWarning=0
-DispFixRot=1
-SysAppNeverSleep=1
-SoundOutputFreq=44100
