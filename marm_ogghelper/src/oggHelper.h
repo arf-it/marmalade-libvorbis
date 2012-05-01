@@ -198,7 +198,7 @@ protected:
 	unsigned int cb_pos;
 	unsigned int cb_size;
 
-	OggVorbis_File	vf;
+	//OggVorbis_File	vf;
 	vorbis_info		*vi;
 
 	
@@ -241,6 +241,8 @@ protected:
 
 public:
 	
+	OggVorbis_File	*vf;
+
 	COggVorbisFileHelper();
 	~COggVorbisFileHelper();
 
@@ -261,7 +263,9 @@ public:
 		OH_STOPPED		= 3,
 		OH_PAUSED		= 4,
 		OH_ERROR		= 5,
-		OH_BUFFERING	= 6
+		OH_BUFFERING	= 6,
+		OH_BUFFERUNDERRUN = 7,
+		OH_END			= 8
 	} nStatus;
 
 	enum STEREO_MODE

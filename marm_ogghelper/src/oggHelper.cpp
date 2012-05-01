@@ -61,6 +61,7 @@ void CThread::Execute(void* arg)
 	thread_status = TRUNNING;
 	p->decode_loop();
 	//((COggVorbisFileHelper*) arg)->decode_loop((COggVorbisFileHelper*) arg);
+	ov_clear(p->vf); //has to be called here because of the memory is allocated in this thread!
 	thread_status = TIDLE;
 }
 
@@ -82,8 +83,10 @@ int CThread::Cancel()
 //////////////////////////////////////////////////////////////////////////
 COggVorbisFileHelper::COggVorbisFileHelper()
 {
+	oggvorbis_filein = NULL;
 	mDecBuffer = NULL;
 	vi = NULL;
+	vf = NULL;
 	total_samples = 0;
 	nChannels = 0;
 	nRate = 0;
@@ -111,7 +114,9 @@ COggVorbisFileHelper::COggVorbisFileHelper()
 	bEnableResampling = false;
 	bEnableFilter = false;
 
-	memset(&vf,0,sizeof(vf));
+	vf = new OggVorbis_File;
+	
+	memset(vf,0,sizeof(vf));
 
 	nFilterCoefficients = 129;
 	iFilterBufferL = new int16[nFilterCoefficients];
@@ -122,17 +127,26 @@ COggVorbisFileHelper::COggVorbisFileHelper()
 	m_outbufsizeR =  _CONVSIZE_;
 	m_outL = new short[m_outbufsizeL];
 	m_outR = new short[m_outbufsizeR];
+
+	mDecBuffer = new  Queue<ogg_int16_t>(_CIRCBUFSIZE_);  //CCircularBuffer(_CIRCBUFSIZE_);
 	
 }
 
 COggVorbisFileHelper::~COggVorbisFileHelper()
 {
+	bStopDecoding = true;
+	while(mDecThread.thread_status == CThread::TRUNNING) 
+	{
+		s3eDebugTracePrintf("waiting decoding thread terminating\n");
+		s3eDeviceYield(10);
+	}
+
 	if(mDecBuffer != NULL)
 	{
 		delete mDecBuffer;
 		mDecBuffer = NULL;
 	}
-	cleanup();
+	//cleanup();
 
 	if(res_contR)	speex_resampler_destroy(res_contR);
 	if(res_contL)	speex_resampler_destroy(res_contL);
@@ -143,17 +157,23 @@ COggVorbisFileHelper::~COggVorbisFileHelper()
 
 	delete [] m_outL;
 	delete [] m_outR;
+
+	if(nStatus != OH_NAN) ov_clear(vf);
+	delete vf;
+	vf = NULL;
+
+	
 }
 
 void COggVorbisFileHelper::cleanup()
 {
 	if(nSoundChannel >= 0) s3eSoundChannelStop(nSoundChannel);
-	bStopDecoding = true;
-	while(mDecThread.thread_status == CThread::TRUNNING) 
-	{
-		s3eDebugTracePrintf("waiting decoding thread terminating\n");
-		s3eDeviceYield(10);
-	}
+	//bStopDecoding = true;
+	//while(mDecThread.thread_status == CThread::TRUNNING) 
+	//{
+	//	s3eDebugTracePrintf("waiting decoding thread terminating\n");
+	//	s3eDeviceYield(10);
+	//}
 	if(nSoundChannel != -1)
 	{
 		s3eSoundChannelUnRegister(nSoundChannel, S3E_CHANNEL_GEN_AUDIO_STEREO);
@@ -183,16 +203,13 @@ void COggVorbisFileHelper::cleanup()
 	bStopDecoding = false;
 	stereoOutputMode = STEREO_MODE_MONO;
 
-	if(mDecBuffer != NULL)
-		delete mDecBuffer;
-
-	mDecBuffer = NULL;
-
 	rcb_len = 0;
-
-	ov_clear(&vf);
+	
 	if(vi)
+	{
 		vorbis_info_clear(vi);
+		vi = NULL;
+	}
 
 	nResampleQuality = 0;
 	bEnableResampling = false;
@@ -201,11 +218,8 @@ void COggVorbisFileHelper::cleanup()
 
 bool COggVorbisFileHelper::init( std::string fin_str,bool bResample /*= true*/,int nResQuality/*=0*/ )
 {
+	pthread_mutex_lock(&mutex1);
 	cleanup();
-
-	if(mDecBuffer == NULL)
-		mDecBuffer = new  Queue<ogg_int16_t>(_CIRCBUFSIZE_);  //CCircularBuffer(_CIRCBUFSIZE_);
-
 
 	nSoundChannel = s3eSoundGetFreeChannel();
 	if(nSoundChannel == -1)
@@ -214,6 +228,7 @@ bool COggVorbisFileHelper::init( std::string fin_str,bool bResample /*= true*/,i
 		m_strLastError = "Cannot open a sound channel.";
 		s3eDebugTracePrintf("%s\n",m_strLastError.c_str());
 		cleanup();
+		pthread_mutex_unlock(&mutex1);
 		return false;
 	}
 	s3eSoundChannelRegister(nSoundChannel, S3E_CHANNEL_GEN_AUDIO, GenerateAudioCallback, this);
@@ -225,6 +240,18 @@ bool COggVorbisFileHelper::init( std::string fin_str,bool bResample /*= true*/,i
 	callbacks.close_func = close_func;
 	callbacks.tell_func = tell_func;
 
+	if(oggvorbis_filein != NULL)
+	{
+		if(s3eFileClose(oggvorbis_filein) == S3E_RESULT_ERROR)
+		{
+			m_strLastError.clear();
+			m_strLastError = "Cannot close old file"; 
+			s3eDebugTracePrintf("%s\n",m_strLastError.c_str());
+			cleanup();
+			pthread_mutex_unlock(&mutex1);
+			return false;
+		}
+	}
 	oggvorbis_filein = s3eFileOpen(fin_str.c_str(),"rb");
 
 	if(oggvorbis_filein == NULL)
@@ -233,30 +260,32 @@ bool COggVorbisFileHelper::init( std::string fin_str,bool bResample /*= true*/,i
 		m_strLastError = "Cannot open file " + fin_str; 
 		s3eDebugTracePrintf("%s\n",m_strLastError.c_str());
 		cleanup();
+		pthread_mutex_unlock(&mutex1);
 		return false;
 	}
 
-	if(ov_open_callbacks(oggvorbis_filein, &vf, NULL, 0, callbacks) < 0)
+	if(ov_open_callbacks(oggvorbis_filein, vf, NULL, 0, callbacks) < 0)
 	{
 		m_strLastError.clear();
 		m_strLastError = "Input does not appear to be an Ogg bitstream.";
 		s3eDebugTracePrintf("%s\n",m_strLastError.c_str());
 		cleanup();
+		pthread_mutex_unlock(&mutex1);
 		return false;
 	}
 
 	/* Throw the comments plus a few lines about the bitstream we're
 		decoding */
 	{
-		char **ptr=ov_comment(&vf,-1)->user_comments;
-		vorbis_info *vi=ov_info(&vf,-1);
-		while(*ptr)
-		{
-			fprintf(stderr,"%s\n",*ptr);
-			++ptr;
-		}
-		total_samples = ov_pcm_total(&vf,-1);
-		time_length = ov_time_total_func(&vf,-1);
+		char **ptr=ov_comment(vf,-1)->user_comments;
+		vorbis_info *vi=ov_info(vf,-1);
+		//while(*ptr)
+		//{
+		//	fprintf(stderr,"%s\n",*ptr);
+		//	++ptr;
+		//}
+		total_samples = ov_pcm_total(vf,-1);
+		time_length = ov_time_total_func(vf,-1);
 		nChannels = vi->channels;
 		nRate	= vi->rate;
 
@@ -290,6 +319,7 @@ bool COggVorbisFileHelper::init( std::string fin_str,bool bResample /*= true*/,i
 				m_strLastError = "Cannot start resampler.";
 				s3eDebugTracePrintf("%s\n",m_strLastError.c_str());
 				cleanup();
+				pthread_mutex_unlock(&mutex1);
 				return false;
 			}
 		}
@@ -307,12 +337,13 @@ bool COggVorbisFileHelper::init( std::string fin_str,bool bResample /*= true*/,i
 
 		s3eDebugTracePrintf("\nBitstream is %d channel, %ldHz\n",vi->channels,vi->rate);
 		s3eDebugTracePrintf("\nDecoded length: %ld samples\n",(long)total_samples);
-		s3eDebugTracePrintf("Encoded by: %s\n\n",ov_comment(&vf,-1)->vendor);
+		s3eDebugTracePrintf("Encoded by: %s\n\n",ov_comment(vf,-1)->vendor);
 		s3eDebugTracePrintf("Resampling by rational factor %d / %d", nW, nL);
 	}
 
 	bStopDecoding = false;
 	nStatus = OH_READY;
+	pthread_mutex_unlock(&mutex1);
 
 	return true;
 }
@@ -324,7 +355,7 @@ int COggVorbisFileHelper::decode()
 	char* p = convbuffer + 16; //pre buffer
 	memcpy(p,remaing_convbuffer,rcb_len);
 	p = p+rcb_len;
-	long ret=ov_read_func(&vf,p,cb_len,0,2,1,&current_section);
+	long ret=ov_read_func(vf,p,cb_len,0,2,1,&current_section);
 	pthread_mutex_unlock(&mutex1);
 
     if (ret == 0)
@@ -682,7 +713,7 @@ int COggVorbisFileHelper::decode()
 void COggVorbisFileHelper::decode_loop()
 {
 	int res = EOK;
-	while(res == EOK)
+	while(res != EOS)
 	{
 		res = decode();
 		s3eDeviceYield();
@@ -691,7 +722,7 @@ void COggVorbisFileHelper::decode_loop()
 
 bool COggVorbisFileHelper::IsLastSample()
 {
-	if ((current_sample+1) >= total_samples* (ogg_int64_t)dResampleFactor*get_nChannels()) return true;
+	if ((current_sample+10) >= total_samples* /*(ogg_int64_t)*/dResampleFactor*get_nChannels()) return true;
 	return false;
 }
 
@@ -707,8 +738,7 @@ ogg_int16_t COggVorbisFileHelper::get_sample()
 	while(!mDecBuffer->Dequeue(res))
 	{
 		if(nStatus != OH_PLAYING) return 0;
-		m_strStatus = "Buffer under run";
-		s3eDebugTracePrintf("%s\n",m_strStatus.c_str());
+		nStatus = OH_BUFFERUNDERRUN;
 	}
 	current_sample++;
 	if(get_nChannels() == 2 )
@@ -891,7 +921,7 @@ int32 COggVorbisFileHelper::EndSampleCallback( void* sys, void* user )
 	s3eSoundEndSampleInfo* info = (s3eSoundEndSampleInfo*)sys;
 	
 	COggVorbisFileHelper* ogg_hlp = (COggVorbisFileHelper*) user;
-	ogg_hlp->set_status(COggVorbisFileHelper::OH_STOPPED);
+	ogg_hlp->set_status(COggVorbisFileHelper::OH_END);
 
 	return info->m_RepsRemaining;
 }
@@ -930,10 +960,10 @@ bool COggVorbisFileHelper::stop()
 {
 	if(nSoundChannel >= 0) s3eSoundChannelStop(nSoundChannel);
 	s3eDeviceYield(1);
-	if(vf.datasource && vf.seekable)
+	if(vf->datasource && vf->seekable)
 	{
 		if(mDecThread.thread_status == CThread::TRUNNING)	pthread_mutex_lock(&mutex1);
-		ov_time_seek(&vf,0);
+		ov_time_seek(vf,0);
 		current_time = 0;
 		current_sample = 0;
 		if(mDecThread.thread_status == CThread::TRUNNING)	pthread_mutex_unlock(&mutex1);
@@ -960,16 +990,16 @@ bool COggVorbisFileHelper::resume()
 
 bool COggVorbisFileHelper::set_current_timepos( double pos )
 {
-	if(vf.datasource && vf.seekable)
+	if(vf->datasource && vf->seekable)
 	{
 		if(nStatus == OH_PLAYING)
 		{
 			s3eSoundChannelPause(nSoundChannel);
 			s3eDeviceYield(1);
 			if(mDecThread.thread_status == CThread::TRUNNING)	pthread_mutex_lock(&mutex1);
-			ov_time_seek_func(&vf,pos);
+			ov_time_seek_func(vf,pos);
 			current_time = pos;
-			current_sample = ov_pcm_tell(&vf) * (ogg_int64_t)dResampleFactor*get_nChannels();
+			current_sample = (ogg_int64_t)(ov_pcm_tell(vf) * dResampleFactor*get_nChannels());
 			if(mDecThread.thread_status == CThread::TRUNNING)	pthread_mutex_unlock(&mutex1);
 			nStatus = OH_BUFFERING;
 			mDecBuffer->Clear();
@@ -979,9 +1009,9 @@ bool COggVorbisFileHelper::set_current_timepos( double pos )
 		else
 		{
 			if(mDecThread.thread_status == CThread::TRUNNING)	pthread_mutex_lock(&mutex1);
-			ov_time_seek_func(&vf,pos);
+			ov_time_seek_func(vf,pos);
 			current_time = pos;
-			current_sample = ov_pcm_tell(&vf) * (ogg_int64_t)dResampleFactor*get_nChannels();
+			current_sample = (ogg_int64_t) (ov_pcm_tell(vf) * dResampleFactor*get_nChannels());
 			if(mDecThread.thread_status == CThread::TRUNNING)	pthread_mutex_unlock(&mutex1);
 			mDecBuffer->Clear();
 		}
