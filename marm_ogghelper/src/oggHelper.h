@@ -1,3 +1,4 @@
+#pragma once
 #include <s3e.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,16 +14,17 @@
 #include <vorbis/vorbisfile.h>
 #endif
 
-//#ifdef _WIN32 /* We need the following two to set stdin/stdout to binary */
-//#include <io.h>
-//#include <fcntl.h>
-//#endif
 #include <string>
-#include <pthread.h>
 #include "s3eFile.h"
 #include <vector>
 #include "..\libs\resample.h"
 #include <s3eMemory.h>
+
+#if defined(HAVE_PTHREAD)
+#include <pthread.h>
+#else
+#define pthread_t int
+#endif
 
 #define _CONVSIZE_ 4096
 #define _CIRCBUFSIZE_	262144 //must be power of 2
@@ -35,6 +37,8 @@ public:
 	int Start(void * arg);
 	int Suspend();
 	int Cancel();
+	void * Arg() const {return Arg_;}
+	void Arg(void* a){Arg_ = a;}
 
 	enum status 
 	{
@@ -46,13 +50,11 @@ protected:
 	int Run(void * arg);
 	static void* EntryPoint(void*);
 	void Setup();
-	void Execute(void*);
-	void * Arg() const {return Arg_;}
-	void Arg(void* a){Arg_ = a;}
+	virtual void Execute(void*);
 private:
 	pthread_t ThreadId_;
 	void * Arg_;
-
+	s3eMemoryUsrMgr mgr;
 };
 
 //---------------------------------------------------------------------------
@@ -241,10 +243,10 @@ protected:
 
 public:
 	
-	OggVorbis_File	*vf;
+	OggVorbis_File	vf;
 
 	COggVorbisFileHelper();
-	~COggVorbisFileHelper();
+	virtual ~COggVorbisFileHelper();
 
 	enum
 	{
@@ -283,7 +285,7 @@ public:
 
 	int get_decbufspace() { if(mDecBuffer)return mDecBuffer->GetBusy();return 0;};
 	double get_decbuf(){return (double)get_decbufspace()/_CIRCBUFSIZE_;};
-	bool init(std::string fin_str,bool bResample = true,int nResQuality = 0);
+	bool init(std::string fin_str,bool bResample = true,int nResQuality = 0, char* pData = NULL, uint32 iSize = 0);
 	bool play();
 	bool stop();
 	bool pause();
@@ -312,14 +314,14 @@ public:
 	ogg_int64_t get_nsamples() const { return total_samples; };
 	ogg_int16_t get_sample();
 
-	void decode_loop();
+	virtual void decode_loop();
 
 	int Wait_counter() const { return wait_counter; }
 	void Wait_counter(int val) { wait_counter = val; }
 
 	
 
-private:
+protected:
 	STEREO_MODE stereoOutputMode;
 	int wait_counter;
 	// internal functions 
@@ -339,7 +341,7 @@ private:
 	double ov_time_tell_func(OggVorbis_File *vf);
 	int ov_time_seek_func(OggVorbis_File *vf,double pos);
 
-	bool IsLastSample();
+	virtual bool IsLastSample();
 
 public:
 	// streaming callbacks

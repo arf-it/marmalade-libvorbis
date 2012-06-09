@@ -1,1 +1,3 @@
-_USELIBTREMOR enable the tremor library
+_USELIBTREMOR		enable the tremor library
+HAVE_PTHREAD		enable threading
+USE_GMEMORYMANGER	enable using of global memory manager (buggy??)
