@@ -5,7 +5,8 @@ option module_path="$MARMALADE_ROOT/examples/s3e/"
 
 defines
 {
-	HAVE_PTHREAD
+#	USE_GMEMORYMANGER
+#	HAVE_PTHREAD
 }
 
 subprojects

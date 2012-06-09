@@ -126,6 +126,7 @@ COggVorbisFileHelper::COggVorbisFileHelper()
 	current_time	= 0;
 	current_sample = 0;
 	current_section = 0;
+	m_dBufferingMaxCapacity = 0.75;
 	bStopDecoding = false;
 	nStatus = OH_NAN;
 	wait_counter = 0;
@@ -192,18 +193,18 @@ COggVorbisFileHelper::~COggVorbisFileHelper()
 void COggVorbisFileHelper::cleanup()
 {
 	if(nSoundChannel >= 0) s3eSoundChannelStop(nSoundChannel);
-	//bStopDecoding = true;
-	//while(mDecThread.thread_status == CThread::TRUNNING) 
-	//{
-	//	s3eDebugTracePrintf("waiting decoding thread terminating\n");
-	//	s3eDeviceYield(10);
-	//}
-	//if(nSoundChannel != -1)
-	//{
-	//	s3eSoundChannelUnRegister(nSoundChannel, S3E_CHANNEL_GEN_AUDIO_STEREO);
-	//	s3eSoundChannelUnRegister(nSoundChannel, S3E_CHANNEL_GEN_AUDIO);
-	//	s3eSoundChannelUnRegister(nSoundChannel, S3E_CHANNEL_END_SAMPLE);
-	//}
+	bStopDecoding = true;
+	while(mDecThread.thread_status == CThread::TRUNNING) 
+	{
+		s3eDebugTracePrintf("waiting decoding thread terminating\n");
+		s3eDeviceYield(10);
+	}
+	if(nSoundChannel != -1)
+	{
+		s3eSoundChannelUnRegister(nSoundChannel, S3E_CHANNEL_GEN_AUDIO_STEREO);
+		s3eSoundChannelUnRegister(nSoundChannel, S3E_CHANNEL_GEN_AUDIO);
+		s3eSoundChannelUnRegister(nSoundChannel, S3E_CHANNEL_END_SAMPLE);
+	}
 
 	//m_resampler.clear();
 
@@ -229,7 +230,9 @@ void COggVorbisFileHelper::cleanup()
 
 	rcb_len = 0;
 
-	//ov_clear(&vf);
+	ov_clear(&vf);
+	oggvorbis_filein = NULL;
+
 	if(vi)
 	{
 		vorbis_info_clear(vi);
@@ -276,7 +279,7 @@ bool COggVorbisFileHelper::init( std::string fin_str,bool bResample /*= true*/,i
 	}
 	else
 	{
-		if(oggvorbis_filein != NULL)
+		if(false /*oggvorbis_filein != NULL*/)
 		{
 			if(s3eFileClose(oggvorbis_filein) == S3E_RESULT_ERROR)
 			{
@@ -438,10 +441,9 @@ int COggVorbisFileHelper::decode()
 				if(bStopDecoding) return EOS;
 				if(nStatus == OH_BUFFERING)
 				{
-					if(mDecBuffer->GetBusy() >= mDecBuffer->GetCapacity() * 0.75 || k == nr_samples - 1)
+					if(mDecBuffer->GetBusy() >= mDecBuffer->GetCapacity() * m_dBufferingMaxCapacity || k == nr_samples - 1)
 					{
-						m_strStatus = "buffering complete. Playing now..";
-						s3eDebugTracePrintf("%s\n",m_strStatus.c_str());
+						s3eDebugTracePrintf("buffering complete. Playing now..\n");
 						nStatus = OH_PLAYING;
 						Wait_counter(0);
 					}
@@ -452,207 +454,17 @@ int COggVorbisFileHelper::decode()
 					if(bStopDecoding) return EOS;/*fprintf(stderr,"Buffer full\n")*/;
 					if(nStatus == OH_BUFFERING) 
 					{
-						m_strStatus = "buffering complete. Playing now..";
-						s3eDebugTracePrintf("%s\n",m_strStatus.c_str());
+						s3eDebugTracePrintf("buffering complete. Playing now..\n");
 						nStatus = OH_PLAYING;
 						Wait_counter(0);
 					}
+					return BFF;
 				}
 
 			}
 
 			return EOK;
 		}
-
-		//if(!bEnableResampling) //store samples in the circular buffer
-		//{
-		//	rcb_len = 0;
-		//	if (get_nChannels() == 2) nr_samples /= 2;
-
-		//	int kmax = (int)(nr_samples*dResampleFactor);
-		//	for(int k=0;k<kmax;k++)
-		//	{
-		//		int kr = k;
-		//		kr=(int)(k/dResampleFactor);
-		//		if((kr+8) >= nr_samples)
-		//		{
-		//			p = (convbuffer+(kr)*sizeof(ogg_int16_t));
-		//			//char* rp = remaing_convbuffer+rcb_len;
-		//			memcpy(remaing_convbuffer,p,sizeof(ogg_int16_t)*8);
-		//			p = (convbuffer+(kr-8)*sizeof(ogg_int16_t));
-		//			memcpy(convbuffer,p,sizeof(ogg_int16_t)*8);
-		//			rcb_len =sizeof(ogg_int16_t)*8;
-		//			return EOK;
-		//		}
-		//		else
-		//		{
-		//			float pf;
-		//			pf = 0.5f;
-		//			ogg_int16_t valL = 0;
-		//			ogg_int16_t valR = 0;
-		//			int kr0,kr1;
-		//			int sample0, sample1, sample2,sample3,sample4,sample5;
-		//			int sampleR0, sampleR1,sampleR2,sampleR3,sampleR4,sampleR5;
-	
-		//			kr0 = kr -1;
-		//			kr1 = kr -2;
-		//			//if(kr <= 5) {kr1=0;kr0=0;};
-
-		//			double x = ((double)k/dResampleFactor) - (double) kr;
-
-		//			//if(nChannels == 1)
-		//			//{
-		//			//	sample0 = *(ogg_int16_t*)(convbuffer+kr*sizeof(ogg_int16_t));
-		//			//	sample1 = *(ogg_int16_t*)(convbuffer+(kr+1)*sizeof(ogg_int16_t));
-		//			//	sample2 = *(ogg_int16_t*)(convbuffer+(kr+2)*sizeof(ogg_int16_t));
-		//			//}
-		//			//else
-		//			//{
-		//			//	sample0 = *(ogg_int16_t*)(convbuffer+2*kr*sizeof(ogg_int16_t));
-		//			//	sample1 = *(ogg_int16_t*)(convbuffer+(2*kr+2)*sizeof(ogg_int16_t));
-		//			//	sample2 = *(ogg_int16_t*)(convbuffer+(2*kr+4)*sizeof(ogg_int16_t));
-		//			//
-		//			//	int sampleR0 = *(ogg_int16_t*)(convbuffer+(2*kr+1)*sizeof(ogg_int16_t));
-		//			//	int sampleR1 = *(ogg_int16_t*)(convbuffer+(2*kr+3)*sizeof(ogg_int16_t));
-		//			//	int sampleR2 = *(ogg_int16_t*)(convbuffer+(2*kr+5)*sizeof(ogg_int16_t));
-		//			//	valR = sampleR0 + (int16)((pf/2.0f) * (pf * (sampleR0 - (2.0f * sampleR1) + sampleR2))
-		//			//		- 3.0f * sampleR0 + 4.0f * sampleR1 - sampleR2);
-
-		//			//}
-
-		//			//valL = sample0 + (int16)((pf/2.0f) * (pf * (sample0 - (2.0f * sample1) + sample2))
-		//			//	- 3.0f * sample0 + 4.0f * sample1 - sample2);
-
-		//			if(nChannels == 1)
-		//			{
-		//				sample0=*(ogg_int16_t*)(convbuffer+(kr1)*sizeof(ogg_int16_t));
-		//				sample1=*(ogg_int16_t*)(convbuffer+(kr0)*sizeof(ogg_int16_t));
-		//				sample2=*(ogg_int16_t*)(convbuffer+kr*sizeof(ogg_int16_t));
-		//				sample3=*(ogg_int16_t*)(convbuffer+(kr+1)*sizeof(ogg_int16_t));
-		//				sample4=*(ogg_int16_t*)(convbuffer+(kr+2)*sizeof(ogg_int16_t));
-		//				sample5=*(ogg_int16_t*)(convbuffer+(kr+3)*sizeof(ogg_int16_t));
-		//			}
-		//			else
-		//			{
-		//				sample0=*(ogg_int16_t*)(convbuffer+(2*kr1)*sizeof(ogg_int16_t));
-		//				sample1=*(ogg_int16_t*)(convbuffer+(2*kr0)*sizeof(ogg_int16_t));
-		//				sample2=*(ogg_int16_t*)(convbuffer+2*kr*sizeof(ogg_int16_t));
-		//				sample3=*(ogg_int16_t*)(convbuffer+(2*kr+2)*sizeof(ogg_int16_t));
-		//				sample4=*(ogg_int16_t*)(convbuffer+(2*kr+4)*sizeof(ogg_int16_t));
-		//				sample5=*(ogg_int16_t*)(convbuffer+(2*kr+6)*sizeof(ogg_int16_t));
-
-		//				sampleR0=*(ogg_int16_t*)(convbuffer+(2*kr1+1)*sizeof(ogg_int16_t));
-		//				sampleR1=*(ogg_int16_t*)(convbuffer+(2*kr0+1)*sizeof(ogg_int16_t));
-		//				sampleR2=*(ogg_int16_t*)(convbuffer+(2*kr+1)*sizeof(ogg_int16_t));
-		//				sampleR3=*(ogg_int16_t*)(convbuffer+(2*kr+3)*sizeof(ogg_int16_t));
-		//				sampleR4=*(ogg_int16_t*)(convbuffer+(2*kr+5)*sizeof(ogg_int16_t));
-		//				sampleR5=*(ogg_int16_t*)(convbuffer+(2*kr+7)*sizeof(ogg_int16_t));
-
-
-		//				//valR = (ogg_int16_t) (sampleR2 + 0.04166666666*x*((sampleR3-sampleR1)*16.0+(sampleR0-sampleR4)*2.0
-		//				//	+ x *((sampleR3+sampleR1)*16.0-sampleR0-sampleR2*30.0- sampleR4
-		//				//	+ x *(sampleR3*66.0-sampleR2*70.0-sampleR4*33.0+sampleR1*39.0+ sampleR5*7.0- sampleR0*9.0
-		//				//	+ x *( sampleR2*126.0-sampleR3*124.0+sampleR4*61.0-sampleR1*64.0- sampleR5*12.0+sampleR0*13.0
-		//				//	+ x *((sampleR3-sampleR2)*50.0+(sampleR1-sampleR4)*25.0+(sampleR5-sampleR0)*5.0))))));
-
-		//				float c = (float)(sampleR2 - sampleR1) * 0.5f;
-		//				float v = (float)(sampleR2 - sampleR3);
-		//				float w = c + v;
-		//				float a = w + v + (float)(sampleR3 - sampleR2) * 0.5f;
-		//				float b_neg = w + a;
-
-		//				valR = (ogg_int16_t)((((a * x) - b_neg) * x + c) * x + sampleR2);
-
-		//			}
-
-		//			//valL = (ogg_int16_t) (sample2 + 0.04166666666*x*((sample3-sample1)*16.0+(sample0-sample4)*2.0
-		//			//	+ x *((sample3+sample1)*16.0-sample0-sample2*30.0- sample4
-		//			//	+ x *(sample3*66.0-sample2*70.0-sample4*33.0+sample1*39.0+ sample5*7.0- sample0*9.0
-		//			//	+ x *( sample2*126.0-sample3*124.0+sample4*61.0-sample1*64.0- sample5*12.0+sample0*13.0
-		//			//	+ x *((sample3-sample2)*50.0+(sample1-sample4)*25.0+(sample5-sample0)*5.0))))));
-
-		//				float c = (float)(sample2 - sample1) * 0.5f;
-		//				float v = (float)(sample2 - sample3);
-		//				float w = c + v;
-		//				float a = w + v + (float)(sample3 - sample2) * 0.5f;
-		//				float b_neg = w + a;
-
-		//				valL = (ogg_int16_t)((((a * x) - b_neg) * x + c) * x + sample2);
-		//		
-
-
-		//			if (bEnableFilter)
-		//			{
-		//				// apply FIR filter to output to remove artifacts
-		//				static int bufferPos = -1;
-		//				bufferPos = (bufferPos + 1) % nFilterCoefficients;
-
-		//				// use circular buffer to store previous inputs
-		//				iFilterBufferL[bufferPos] = valL;
-
-		//				valL = 0;
-		//				for (int i=0; i< nFilterCoefficients; i++)
-		//				{
-		//					valL += (int16)(dFilterCoefficients[i] * iFilterBufferL[(bufferPos + i) % nFilterCoefficients]);
-		//				}
-
-		//				if(nChannels == 2)
-		//				{
-		//					iFilterBufferR[bufferPos] = valR;
-		//					valR = 0;
-		//					for (int i=0; i< nFilterCoefficients; i++)
-		//					{
-		//						valR += (int16)(dFilterCoefficients[i] * iFilterBufferR[(bufferPos + i) % nFilterCoefficients]);
-		//					}
-		//				}
-		//			}
-
-
-
-		//			if(bStopDecoding) return EOS;
-		//			if(nStatus == OH_BUFFERING)
-		//			{
-		//				if(mDecBuffer->GetBusy() >= mDecBuffer->GetCapacity() * 0.75)
-		//				{
-		//					m_strStatus = "buffering complete. Playing now..";
-		//					s3eDebugTracePrintf("%s\n",m_strStatus.c_str());
-		//					nStatus = OH_PLAYING;
-		//					Wait_counter(0);
-		//				}
-		//			}
-		//			while(!mDecBuffer->Enqueue(valL))
-		//			{
-		//				s3eDeviceYieldUntilEvent();
-		//				if(bStopDecoding) return EOS;/*fprintf(stderr,"Buffer full\n")*/;
-		//				if(nStatus == OH_BUFFERING) 
-		//				{
-		//					m_strStatus = "buffering complete. Playing now..";
-		//					s3eDebugTracePrintf("%s\n",m_strStatus.c_str());
-		//					nStatus = OH_PLAYING;
-		//					Wait_counter(0);
-		//				}
-		//			}
-		//			if(get_nChannels() == 2)
-		//			{
-		//				while(!mDecBuffer->Enqueue(valR))
-		//				{
-		//					s3eDeviceYieldUntilEvent();
-		//					if(bStopDecoding) return EOS;/*fprintf(stderr,"Buffer full\n")*/;
-		//					if(nStatus == OH_BUFFERING) 
-		//					{
-		//						m_strStatus = "buffering complete. Playing now..";
-		//						s3eDebugTracePrintf("%s\n",m_strStatus.c_str());
-		//						nStatus = OH_PLAYING;
-		//						Wait_counter(0);
-		//					}
-		//				}
-		//			}
-		//		}
-		//	}
-
-		//	return EOK;
-		//}
-
 
 		if (get_nChannels() == 2) nr_samples /= 2;
 
@@ -719,9 +531,9 @@ int COggVorbisFileHelper::decode()
 
 			if(nStatus == OH_BUFFERING)
 			{
-				if(mDecBuffer->GetBusy() >= mDecBuffer->GetCapacity() * 0.75 || k == nr_samples - 1)
+				if(mDecBuffer->GetBusy() >= mDecBuffer->GetCapacity() * m_dBufferingMaxCapacity || k == nr_samples - 1)
 				{
-					s3eDebugTracePrintf("%s\n","buffering complete. Playing now..");
+					s3eDebugTracePrintf("buffering complete. Playing now..\n");
 					nStatus = OH_PLAYING;
 					Wait_counter(0);
 				}
@@ -732,10 +544,11 @@ int COggVorbisFileHelper::decode()
 				if(bStopDecoding) return EOS;/*fprintf(stderr,"Buffer full\n")*/;
 				if(nStatus == OH_BUFFERING) 
 				{
-					s3eDebugTracePrintf("%s\n","buffering complete. Playing now..");
+					s3eDebugTracePrintf("buffering complete. Playing now..\n");
 					nStatus = OH_PLAYING;
 					Wait_counter(0);
 				}
+				return BFF;
 			}
 			if(get_nChannels() == 2)
 			{
@@ -745,10 +558,11 @@ int COggVorbisFileHelper::decode()
 					if(bStopDecoding) return EOS;/*fprintf(stderr,"Buffer full\n")*/;
 					if(nStatus == OH_BUFFERING) 
 					{
-						s3eDebugTracePrintf("%s\n","buffering complete. Playing now..");
+						s3eDebugTracePrintf("buffering complete. Playing now..\n");
 						nStatus = OH_PLAYING;
 						Wait_counter(0);
 					}
+					return BFF;
 				}
 			}
 		}
@@ -854,12 +668,12 @@ int COggVorbisFileHelper::GenerateAudioCallback( void* sys, void* user )
 	int nWC = ogg_hlp->Wait_counter();
 	if((ogg_hlp->get_status() == OH_BUFFERING) || (nWC < 5))
 	{
-		char str_tmp[1024];
-		sprintf(str_tmp,"Buffering. Free space: %d\nSamples: %d\nCounter:%d\n",
-			ogg_hlp->mDecBuffer->GetBusy(),
-			info->m_NumSamples,
-			nWC);
-		s3eDebugTracePrintf("%s\n",str_tmp);
+		//char str_tmp[1024];
+		//sprintf(str_tmp,"Buffering. Free space: %d\nSamples: %d\nCounter:%d\n",
+		//	ogg_hlp->mDecBuffer->GetBusy(),
+		//	info->m_NumSamples,
+		//	nWC);
+		//s3eDebugTracePrintf("%s\n",str_tmp);
 
 		if(ogg_hlp->get_status() == OH_PLAYING)
 		{
@@ -999,6 +813,7 @@ bool COggVorbisFileHelper::play()
 		bStopDecoding = false;
 		if(mDecThread.thread_status == CThread::TIDLE) mDecThread.Start(this);
 		s3eSoundChannelPlay(nSoundChannel, dummydata,8, 1, 0);
+		
 		return true;
 	}
 	return false;

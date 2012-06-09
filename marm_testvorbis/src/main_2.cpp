@@ -15,6 +15,7 @@
 //#include "s3e.h"
 #include "ExamplesMain.h"
 #include "oggHelper.h"
+#include "OggHandler.h"
 #include "sound_helper.h"
 
 int		g_curSoundPos = 0;
@@ -24,8 +25,14 @@ int		g_SamplesPlayed;
 int		g_ResampleQuality = -1;
 bool	g_EnableResample = true;
 
-#define	_BUILD	128
+#define	_BUILD	130
+
+#ifdef HAVE_PTHREAD
 COggVorbisFileHelper* ogg_hlp;
+#else
+COggHandler* ogg_hlp;
+#endif
+
 
 
 bool LoadSound()
@@ -74,8 +81,15 @@ bool    g_Playing = false;  // True if we're playing a sample
 
 void ExampleInit()
 {
+
+#ifdef HAVE_PTHREAD
 	ogg_hlp = new COggVorbisFileHelper;
-	
+	ogg_hlp->set_bufferingMaxCapacity(float(0.75));
+#else
+	ogg_hlp = new COggHandler;
+	ogg_hlp->set_bufferingMaxCapacity(float(0.30));
+#endif
+
     g_PlayNoResampleButton = NewButton("Play");
 
     g_StopButton = NewButton("Stop");
@@ -95,6 +109,8 @@ void ExampleTerm()
 {
 	ogg_hlp->stop();
 	ogg_hlp->cleanup();
+	delete ogg_hlp;
+	ogg_hlp = NULL;
 }
 
 /*
@@ -105,7 +121,11 @@ void ExampleTerm()
  */
 bool ExampleUpdate()
 {
-    Button* pressed = GetSelectedButton();
+#ifndef HAVE_PTHREAD
+	ogg_hlp->decodeSynchron();
+#endif 
+
+	Button* pressed = GetSelectedButton();
 
 	g_Playing = (ogg_hlp->get_status() == COggVorbisFileHelper::OH_PLAYING);
     if (!g_Playing)

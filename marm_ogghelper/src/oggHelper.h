@@ -39,7 +39,6 @@ public:
 	int Cancel();
 	void * Arg() const {return Arg_;}
 	void Arg(void* a){Arg_ = a;}
-
 	enum status 
 	{
 		TRUNNING = 1,
@@ -200,7 +199,7 @@ protected:
 	unsigned int cb_pos;
 	unsigned int cb_size;
 
-	//OggVorbis_File	vf;
+	OggVorbis_File	vf;
 	vorbis_info		*vi;
 
 	
@@ -239,12 +238,9 @@ protected:
 	int16* iFilterBufferR;
 	double* dFilterCoefficients;
 
-
+	float	m_dBufferingMaxCapacity;
 
 public:
-	
-	OggVorbis_File	vf;
-
 	COggVorbisFileHelper();
 	virtual ~COggVorbisFileHelper();
 
@@ -319,6 +315,8 @@ public:
 	int Wait_counter() const { return wait_counter; }
 	void Wait_counter(int val) { wait_counter = val; }
 
+	float get_bufferingMaxCapacity() const { return m_dBufferingMaxCapacity; }
+	void set_bufferingMaxCapacity(float val) { m_dBufferingMaxCapacity = val; }
 	
 
 protected:

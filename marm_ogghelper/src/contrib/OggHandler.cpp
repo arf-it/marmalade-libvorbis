@@ -1,6 +1,5 @@
-#include "IwGx.h"
 #include "OggHandler.h"
-#include "sound_helper.h"
+#include "..\sound_helper.h"
 
 void COggHandler::decode_loop()
 {
@@ -96,18 +95,21 @@ CUInt16ArrayReturnValue* COggHandler::decodeOggFileToArray(const std::string& st
 			pData[iIndex++] = iValue;
 		}
 	}
-	IwAssertMsg(UTIL, iIndex < iCount, ("Index out of bounds %d expected, %d received.", int(iCount), iIndex));
-
 	return new CUInt16ArrayReturnValue(pData, iIndex);
 }
 
 void COggHandler::decodeSynchron()
 {
 	int res = EOK;
-	while (res == EOK && mDecBuffer->GetBusy() <= mDecBuffer->GetCapacity() * 0.75)
+	int64 before = s3eTimerGetUST();
+	res = decode();
+	int64 after = s3eTimerGetUST();
+	while ((res == EOK && mDecBuffer->GetBusy() <= mDecBuffer->GetCapacity() * m_dSyncronBufferingMaxCapacity) &&
+		((after - before) < 10))
 	{
 		res = decode();
 		s3eDeviceYield();
+		after = s3eTimerGetUST();
 	}
 }
 

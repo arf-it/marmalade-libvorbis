@@ -20,9 +20,10 @@ private:
 	int m_iLoopCount;
 	int m_iCurrentLoopCount;
 	bool m_bIsBuffered;
+	float m_dSyncronBufferingMaxCapacity;
 
 public:
-	COggHandler() : COggVorbisFileHelper(), m_bLoop(false), m_iLoopCount(0), m_iCurrentLoopCount(0), m_bIsBuffered(false) {}
+	COggHandler() : COggVorbisFileHelper(), m_bLoop(false), m_iLoopCount(0), m_iCurrentLoopCount(0), m_bIsBuffered(false),m_dSyncronBufferingMaxCapacity(0.75) {}
 	~COggHandler(){};
 	void decode_loop();
 	void decodeSynchron();

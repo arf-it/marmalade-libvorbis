@@ -1,4 +1,5 @@
 includepath src
+includepath src\contrib
 
 #define _USELIBTREMOR
 
@@ -24,6 +25,10 @@ files
 		oggHelper.h
 		sound_helper.h
 		wsfir.h
+	(src\contrib)
+	[contrib]
+		OggHandler.cpp
+		OggHandler.h
 	(libs)
 	[libresample]
 		arch.h
